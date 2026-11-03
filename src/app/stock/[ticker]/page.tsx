@@ -1,10 +1,11 @@
 import { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, AlertCircle, BarChart3, Sparkles } from "lucide-react";
-import { getStockQuote, getStockProfile } from "@/lib/finnhub";
+import { ArrowLeft, AlertCircle, Sparkles } from "lucide-react";
+import { getStockQuote, getStockProfile, getStockFundamentals } from "@/lib/finnhub";
 import { getHistoricalCandles } from "@/lib/twelvedata";
 import { StockHeader } from "@/components/stock/StockHeader";
 import { PriceChartLazy } from "@/components/stock/PriceChartLazy";
+import { FundamentalsGrid } from "@/components/stock/FundamentalsGrid";
 import { buttonVariants } from "@/components/ui/button";
 
 interface PageProps {
@@ -15,8 +16,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { ticker } = await params;
   const cleanTicker = ticker.toUpperCase();
   return {
-    title: `${cleanTicker} Stock Price & Analysis — StockLens`,
-    description: `Track real-time quotes, technical charts, fundamentals, and AI analysis for ${cleanTicker}.`,
+    title: `${cleanTicker} Stock Price, Indicators & Fundamentals — StockLens`,
+    description: `Track real-time quotes, technical chart overlays (SMA, EMA, RSI, MACD), verified fundamentals, and AI analysis for ${cleanTicker}.`,
   };
 }
 
@@ -24,10 +25,11 @@ export default async function StockDetailPage({ params }: PageProps) {
   const { ticker } = await params;
   const cleanTicker = ticker.toUpperCase();
 
-  // Fetch stock quote and profile in parallel on the server
-  const [quote, profile] = await Promise.all([
+  // Fetch stock quote, profile, and fundamentals in parallel on the server
+  const [quote, profile, fundamentals] = await Promise.all([
     getStockQuote(cleanTicker),
     getStockProfile(cleanTicker),
+    getStockFundamentals(cleanTicker),
   ]);
 
   // Invalid or Unsupported Symbol View
@@ -77,7 +79,7 @@ export default async function StockDetailPage({ params }: PageProps) {
   );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-8">
       {/* Back button & quick navigation */}
       <div className="flex items-center justify-between">
         <Link
@@ -92,7 +94,7 @@ export default async function StockDetailPage({ params }: PageProps) {
       {/* Stock Header Card */}
       <StockHeader quote={quote} profile={profile} />
 
-      {/* Interactive Candlestick / Line Chart (Lazy loaded client component) */}
+      {/* Interactive Candlestick / Line Chart with Overlays & Oscillators */}
       <PriceChartLazy
         symbol={cleanTicker}
         initialRange="1M"
@@ -103,44 +105,28 @@ export default async function StockDetailPage({ params }: PageProps) {
         isMockData={initialCandlesResponse.isMock}
       />
 
-      {/* Placeholder Grid for Upcoming Phases */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-        {/* Phase 3 Preview: Technical Indicators & Fundamentals */}
-        <div className="rounded-2xl border border-dashed border-border/80 bg-muted/10 p-6 flex flex-col justify-between space-y-4">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              <BarChart3 className="size-4 text-emerald-500" />
-              <span>Phase 3 — Technical Indicators & Fundamentals</span>
-            </div>
-            <h3 className="text-base font-semibold text-foreground">
-              Calculated Signals & Financial Metrics
-            </h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              SMA 20/50/200, EMA, RSI(14), MACD chart overlays, and beginner-friendly fundamental cards (P/E, Market Cap, EPS, 52-week Range, Recharts trends) will appear here.
-            </p>
-          </div>
-          <div className="text-[11px] text-muted-foreground/70 font-mono">
-            Status: Next in queue
-          </div>
-        </div>
+      {/* Fundamentals & Earnings Grid */}
+      <FundamentalsGrid
+        fundamentals={fundamentals}
+        currentPrice={quote.currentPrice}
+      />
 
-        {/* Phase 4 Preview: AI Synthesis */}
-        <div className="rounded-2xl border border-dashed border-border/80 bg-muted/10 p-6 flex flex-col justify-between space-y-4">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              <Sparkles className="size-4 text-sky-500" />
-              <span>Phase 4 — Gemini Plain-Language Synthesis</span>
-            </div>
-            <h3 className="text-base font-semibold text-foreground">
-              Grounded AI Analysis
-            </h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Structured JSON output powered by Google Gemini 2.0 Flash. Interprets price trends, indicators, and fundamentals with zero hallucinated figures and strict disclaimer notice.
-            </p>
+      {/* Phase 4 Preview: AI Synthesis */}
+      <div className="rounded-2xl border border-dashed border-border/80 bg-muted/10 p-6 flex flex-col justify-between space-y-4">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            <Sparkles className="size-4 text-sky-500" />
+            <span>Phase 4 — Gemini Plain-Language Synthesis</span>
           </div>
-          <div className="text-[11px] text-muted-foreground/70 font-mono">
-            Status: Following Phase 3
-          </div>
+          <h3 className="text-base font-semibold text-foreground">
+            AI Stock Analysis & Metric Interpretation
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Sends real calculated indicators (SMA, EMA, RSI, MACD) and verified fundamentals (Market Cap, P/E, EPS, 52W Range) to Google Gemini 2.0 Flash. Outputs strictly validated JSON summarizing strengths, risks, technical outlook, and plain-English metric explanations without hallucinations.
+          </p>
+        </div>
+        <div className="text-[11px] text-muted-foreground/70 font-mono">
+          Status: Ready for Phase 4 implementation
         </div>
       </div>
     </div>

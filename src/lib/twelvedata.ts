@@ -13,6 +13,16 @@ function getApiKey(): string | null {
   return key.trim();
 }
 
+/**
+ * Synthetic/demo candles are strictly restricted to local development or DEMO_MODE=true.
+ * In production, genuine missing/failed data states are displayed instead.
+ */
+function isDemoOrDevAllowed(): boolean {
+  if (process.env.DEMO_MODE === "true") return true;
+  if (process.env.NODE_ENV !== "production") return true;
+  return false;
+}
+
 interface RangeConfig {
   interval: string;
   outputsize: number;
@@ -28,7 +38,7 @@ const RANGE_CONFIGS: Record<TimeRange, RangeConfig> = {
 };
 
 /**
- * Generates realistic synthetic candle series for demo/fallback purposes.
+ * Generates realistic synthetic candle series for local dev/demo mode only.
  */
 export function generateSampleCandles(
   basePrice: number,
@@ -40,7 +50,7 @@ export function generateSampleCandles(
   const stepSec = range === "1D" ? 300 : range === "1W" ? 1800 : 86400;
 
   const candles: CandleDataPoint[] = [];
-  let current = basePrice * 0.92;
+  let current = basePrice * 0.94;
 
   for (let i = count; i >= 0; i--) {
     const time = nowSec - i * stepSec;
@@ -79,9 +89,19 @@ export async function getHistoricalCandles(
   const cacheKey = `candles:${cleanSymbol}:${range}`;
 
   return withCache(cacheKey, CACHE_TTL.CANDLES, async () => {
-    // If no key is configured, supply synthetic candles so the UI chart works smoothly
+    // If no key is configured:
     if (!apiKey) {
-      return generateSampleCandles(fallbackBasePrice || 150, range, cleanSymbol);
+      if (isDemoOrDevAllowed() && fallbackBasePrice) {
+        return generateSampleCandles(fallbackBasePrice, range, cleanSymbol);
+      }
+      return {
+        symbol: cleanSymbol,
+        range,
+        candles: [],
+        isAvailable: false,
+        errorMessage: "Historical candles data temporarily unavailable. Please configure TWELVE_DATA_API_KEY.",
+        isMock: false,
+      };
     }
 
     const { interval, outputsize } = RANGE_CONFIGS[range] || RANGE_CONFIGS["1M"];
@@ -96,10 +116,10 @@ export async function getHistoricalCandles(
         return {
           symbol: cleanSymbol,
           range,
-          candles: fallbackBasePrice ? generateSampleCandles(fallbackBasePrice, range, cleanSymbol).candles : [],
+          candles: [],
           isAvailable: false,
-          errorMessage: `Twelve Data response returned HTTP ${res.status}`,
-          isMock: Boolean(fallbackBasePrice),
+          errorMessage: "Historical data temporarily unavailable. Please try again shortly.",
+          isMock: false,
         };
       }
 
@@ -110,11 +130,11 @@ export async function getHistoricalCandles(
         return {
           symbol: cleanSymbol,
           range,
-          candles: fallbackBasePrice ? generateSampleCandles(fallbackBasePrice, range, cleanSymbol).candles : [],
+          candles: [],
           isAvailable: false,
           isRateLimited: true,
           errorMessage: "Twelve Data free tier rate limit reached (8 calls/min). Please try again in 1 minute.",
-          isMock: Boolean(fallbackBasePrice),
+          isMock: false,
         };
       }
 
@@ -123,10 +143,10 @@ export async function getHistoricalCandles(
         return {
           symbol: cleanSymbol,
           range,
-          candles: fallbackBasePrice ? generateSampleCandles(fallbackBasePrice, range, cleanSymbol).candles : [],
+          candles: [],
           isAvailable: false,
           errorMessage: data.message || "Historical candles not available for this symbol.",
-          isMock: Boolean(fallbackBasePrice),
+          isMock: false,
         };
       }
 
@@ -138,7 +158,6 @@ export async function getHistoricalCandles(
       const seenTimes = new Set<number>();
 
       for (const item of rawCandles) {
-        // Parse datetime (e.g. "2024-03-28" or "2024-03-28 15:55:00")
         const parsedTime = Math.floor(new Date(item.datetime).getTime() / 1000);
         if (isNaN(parsedTime) || seenTimes.has(parsedTime)) {
           continue;
@@ -156,7 +175,7 @@ export async function getHistoricalCandles(
       }
 
       // Ensure strict ascending order by time for Lightweight Charts
-      candles.sort((a, b) => (Number(a.time) - Number(b.time)));
+      candles.sort((a, b) => Number(a.time) - Number(b.time));
 
       return {
         symbol: cleanSymbol,
@@ -170,10 +189,10 @@ export async function getHistoricalCandles(
       return {
         symbol: cleanSymbol,
         range,
-        candles: fallbackBasePrice ? generateSampleCandles(fallbackBasePrice, range, cleanSymbol).candles : [],
+        candles: [],
         isAvailable: false,
         errorMessage: "Historical data temporarily unavailable. Please try again shortly.",
-        isMock: Boolean(fallbackBasePrice),
+        isMock: false,
       };
     }
   });

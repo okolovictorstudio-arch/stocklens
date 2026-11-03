@@ -57,3 +57,27 @@ export interface HistoricalCandlesResponse {
   errorMessage?: string;
   isMock?: boolean;
 }
+
+export interface EarningsQuarter {
+  period: string; // e.g. "2024-Q3"
+  actual: number | null;
+  estimate: number | null;
+  surprise?: number | null;
+  surprisePercent?: number | null;
+}
+
+export interface StockFundamentals {
+  symbol: string;
+  marketCap: number | null; // In Millions USD
+  peRatio: number | null;
+  eps: number | null;
+  week52High: number | null;
+  week52Low: number | null;
+  dividendYield: number | null;
+  beta: number | null;
+  roe: number | null;
+  avgVolume10D?: number | null;
+  earningsTrend?: EarningsQuarter[];
+  isAvailable: boolean;
+  isMock?: boolean;
+}

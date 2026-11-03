@@ -1,73 +1,111 @@
 /**
- * In-memory server-side cache with TTL for external API calls.
- * This protects free-tier API quotas (Finnhub: 60 calls/min, Twelve Data: 8 calls/min).
- * Designed to be swapped to Supabase persistence in Phase 5.
+ * Pluggable Server-Side Cache Layer for StockLens.
+ *
+ * Current implementation: In-Memory TTL Cache (survives dev HMR via globalThis).
+ * Phase 5 migration: Swap adapter to Supabase persistence via `setCacheAdapter()`
+ * without altering any callers across the codebase.
  */
 
-interface CacheEntry<T> {
+export interface CacheEntry<T> {
   data: T;
   expiresAt: number;
   cachedAt: number;
 }
 
-// Attach to globalThis to survive Next.js development hot module reloads
-const globalCache = globalThis as unknown as {
-  __stocklensCache?: Map<string, CacheEntry<unknown>>;
-};
-
-if (!globalCache.__stocklensCache) {
-  globalCache.__stocklensCache = new Map();
+export interface CacheAdapter {
+  get<T>(key: string): Promise<T | null>;
+  set<T>(key: string, data: T, ttlSeconds: number): Promise<void>;
+  getInfo?(key: string): Promise<{ isCached: boolean; ttlRemaining?: number }>;
 }
-
-const cache = globalCache.__stocklensCache;
 
 export const CACHE_TTL = {
   QUOTE: 120, // 2 minutes (quotes ~1-5 min)
-  CANDLES: 900, // 15 minutes (candles ~15 min)
-  SEARCH: 3600, // 1 hour (symbol search ~1 hour)
-  PROFILE: 86400, // 24 hours (company profile)
-  INDICATORS: 900, // 15 minutes
+  CANDLES: 900, // 15 minutes (candles & indicators)
+  SEARCH: 3600, // 1 hour (symbol search)
+  FUNDAMENTALS: 86400, // 24 hours (company profile, metrics, earnings)
+  PROFILE: 86400, // 24 hours
 } as const;
 
-/**
- * Executes the fetcher function only if the key is missing or expired in cache.
- */
-export async function withCache<T>(
-  key: string,
-  ttlSeconds: number,
-  fetcher: () => Promise<T>
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(key) as CacheEntry<T> | undefined;
+// In-Memory Adapter with globalThis retention
+class InMemoryCacheAdapter implements CacheAdapter {
+  private map: Map<string, CacheEntry<unknown>>;
 
-  if (cached && cached.expiresAt > now) {
-    return cached.data;
+  constructor() {
+    const g = globalThis as unknown as { __stocklensCache?: Map<string, CacheEntry<unknown>> };
+    if (!g.__stocklensCache) {
+      g.__stocklensCache = new Map();
+    }
+    this.map = g.__stocklensCache;
   }
 
-  // Fetch fresh data
-  const data = await fetcher();
+  async get<T>(key: string): Promise<T | null> {
+    const entry = this.map.get(key) as CacheEntry<T> | undefined;
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      this.map.delete(key);
+      return null;
+    }
+    return entry.data;
+  }
 
-  // Only cache valid (truthy or non-empty) results
-  if (data !== undefined && data !== null) {
-    cache.set(key, {
+  async set<T>(key: string, data: T, ttlSeconds: number): Promise<void> {
+    const now = Date.now();
+    this.map.set(key, {
       data,
       expiresAt: now + ttlSeconds * 1000,
       cachedAt: now,
     });
   }
 
-  return data;
+  async getInfo(key: string): Promise<{ isCached: boolean; ttlRemaining?: number }> {
+    const entry = this.map.get(key);
+    if (!entry) return { isCached: false };
+    const remaining = Math.max(0, Math.round((entry.expiresAt - Date.now()) / 1000));
+    return {
+      isCached: remaining > 0,
+      ttlRemaining: remaining,
+    };
+  }
+}
+
+// Active cache provider instance
+let activeAdapter: CacheAdapter = new InMemoryCacheAdapter();
+
+/**
+ * Plugs in an external cache adapter (e.g., Supabase in Phase 5).
+ */
+export function setCacheAdapter(adapter: CacheAdapter): void {
+  activeAdapter = adapter;
 }
 
 /**
- * Inspect or debug cache item status
+ * Universal caching wrapper: fetches fresh data only on cache miss or expiration.
  */
-export function getCacheInfo(key: string): { isCached: boolean; ttlRemaining?: number } {
-  const cached = cache.get(key);
-  if (!cached) return { isCached: false };
-  const remaining = Math.max(0, Math.round((cached.expiresAt - Date.now()) / 1000));
-  return {
-    isCached: remaining > 0,
-    ttlRemaining: remaining,
-  };
+export async function withCache<T>(
+  key: string,
+  ttlSeconds: number,
+  fetcher: () => Promise<T>
+): Promise<T> {
+  const cached = await activeAdapter.get<T>(key);
+  if (cached !== null && cached !== undefined) {
+    return cached;
+  }
+
+  const fresh = await fetcher();
+
+  if (fresh !== null && fresh !== undefined) {
+    await activeAdapter.set(key, fresh, ttlSeconds);
+  }
+
+  return fresh;
+}
+
+/**
+ * Inspects cache status for debugging/telemetry.
+ */
+export async function getCacheInfo(key: string): Promise<{ isCached: boolean; ttlRemaining?: number }> {
+  if (activeAdapter.getInfo) {
+    return activeAdapter.getInfo(key);
+  }
+  return { isCached: false };
 }

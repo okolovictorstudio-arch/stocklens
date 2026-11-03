@@ -6,8 +6,9 @@ import {
   ColorType,
   CandlestickSeries,
   AreaSeries,
+  LineSeries,
+  HistogramSeries,
   type IChartApi,
-  type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { useTheme } from "next-themes";
@@ -17,9 +18,21 @@ import {
   AlertCircle,
   RefreshCw,
   Clock,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  calculateSMA,
+  calculateEMA,
+  calculateRSI,
+  calculateMACD,
+} from "@/lib/indicators";
 import type { CandleDataPoint, TimeRange } from "@/types/stock";
 
 interface PriceChartProps {
@@ -46,11 +59,17 @@ export function PriceChart({
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
-  const chartContainerRef = React.useRef<HTMLDivElement>(null);
-  const chartInstanceRef = React.useRef<IChartApi | null>(null);
-  const candlestickSeriesRef = React.useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const areaSeriesRef = React.useRef<ISeriesApi<"Area"> | null>(null);
+  // Chart DOM containers
+  const mainChartContainerRef = React.useRef<HTMLDivElement>(null);
+  const rsiContainerRef = React.useRef<HTMLDivElement>(null);
+  const macdContainerRef = React.useRef<HTMLDivElement>(null);
 
+  // Chart instances
+  const mainChartRef = React.useRef<IChartApi | null>(null);
+  const rsiChartRef = React.useRef<IChartApi | null>(null);
+  const macdChartRef = React.useRef<IChartApi | null>(null);
+
+  // State
   const [chartType, setChartType] = React.useState<"candlestick" | "line">("candlestick");
   const [activeRange, setActiveRange] = React.useState<TimeRange>(initialRange);
   const [candles, setCandles] = React.useState<CandleDataPoint[]>(initialCandles);
@@ -58,6 +77,25 @@ export function PriceChart({
   const [rateLimited, setRateLimited] = React.useState(initialRateLimited);
   const [errorMessage, setErrorMessage] = React.useState(initialErrorMessage);
   const [hoveredPoint, setHoveredPoint] = React.useState<CandleDataPoint | null>(null);
+
+  // Indicator Toggle Overlays
+  const [showSMA20, setShowSMA20] = React.useState(false);
+  const [showSMA50, setShowSMA50] = React.useState(false);
+  const [showSMA200, setShowSMA200] = React.useState(false);
+  const [showEMA20, setShowEMA20] = React.useState(false);
+  const [showVolume, setShowVolume] = React.useState(true);
+
+  // Oscillators in separate panes
+  const [showRSI, setShowRSI] = React.useState(false);
+  const [showMACD, setShowMACD] = React.useState(false);
+
+  // Locally calculated indicators (instant, 0 API credits)
+  const sma20Data = React.useMemo(() => calculateSMA(candles, 20), [candles]);
+  const sma50Data = React.useMemo(() => calculateSMA(candles, 50), [candles]);
+  const sma200Data = React.useMemo(() => calculateSMA(candles, 200), [candles]);
+  const ema20Data = React.useMemo(() => calculateEMA(candles, 20), [candles]);
+  const rsi14Data = React.useMemo(() => calculateRSI(candles, 14), [candles]);
+  const macdData = React.useMemo(() => calculateMACD(candles, 12, 26, 9), [candles]);
 
   // Range change handler
   const handleRangeChange = async (newRange: TimeRange) => {
@@ -90,11 +128,10 @@ export function PriceChart({
     }
   };
 
-  // Initialize and recreate chart when container or theme changes
+  // Main Chart Creation & Synchronization
   React.useEffect(() => {
-    if (!chartContainerRef.current) return;
-
-    const container = chartContainerRef.current;
+    if (!mainChartContainerRef.current) return;
+    const container = mainChartContainerRef.current;
     container.innerHTML = "";
 
     const chart = createChart(container, {
@@ -123,7 +160,7 @@ export function PriceChart({
       },
       rightPriceScale: {
         borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "#e4e4e7",
-        scaleMargins: { top: 0.1, bottom: 0.15 },
+        scaleMargins: { top: 0.1, bottom: showVolume ? 0.22 : 0.1 },
       },
       timeScale: {
         borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "#e4e4e7",
@@ -132,9 +169,8 @@ export function PriceChart({
       },
     });
 
-    chartInstanceRef.current = chart;
+    mainChartRef.current = chart;
 
-    // Format candle series data for Lightweight Charts
     const formattedCandles = candles.map((c) => ({
       time: c.time as UTCTimestamp,
       open: c.open,
@@ -143,40 +179,96 @@ export function PriceChart({
       close: c.close,
     }));
 
-    // Add candlestick series
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#10b981", // emerald-500
-      downColor: "#ef4444", // rose-500
-      borderUpColor: "#10b981",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#10b981",
-      wickDownColor: "#ef4444",
-    });
-    candlestickSeriesRef.current = candleSeries;
+    // Volume series (subtle at base of main chart)
+    if (showVolume) {
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        color: isDark ? "rgba(16, 185, 129, 0.2)" : "rgba(16, 185, 129, 0.25)",
+        priceFormat: { type: "volume" },
+        priceScaleId: "volume_scale",
+      });
 
-    // Add area line series (for smooth line mode)
-    const areaSeries = chart.addSeries(AreaSeries, {
-      topColor: isDark ? "rgba(16, 185, 129, 0.28)" : "rgba(16, 185, 129, 0.2)",
-      bottomColor: "transparent",
-      lineColor: "#10b981",
-      lineWidth: 2,
-    });
-    areaSeriesRef.current = areaSeries;
+      chart.priceScale("volume_scale").applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
 
-    // Set series visibility based on active chartType
+      const volumeData = candles
+        .filter((c) => c.volume !== undefined)
+        .map((c) => ({
+          time: c.time as UTCTimestamp,
+          value: c.volume as number,
+          color:
+            c.close >= c.open
+              ? isDark ? "rgba(16, 185, 129, 0.25)" : "rgba(16, 185, 129, 0.3)"
+              : isDark ? "rgba(239, 68, 68, 0.25)" : "rgba(239, 68, 68, 0.3)",
+        }));
+
+      volumeSeries.setData(volumeData);
+    }
+
+    // Price Series
     if (chartType === "candlestick") {
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#10b981",
+        downColor: "#ef4444",
+        borderUpColor: "#10b981",
+        borderDownColor: "#ef4444",
+        wickUpColor: "#10b981",
+        wickDownColor: "#ef4444",
+      });
       candleSeries.setData(formattedCandles);
-      areaSeries.applyOptions({ visible: false });
     } else {
-      areaSeries.setData(
-        formattedCandles.map((c) => ({ time: c.time, value: c.close }))
-      );
-      candleSeries.applyOptions({ visible: false });
+      const areaSeries = chart.addSeries(AreaSeries, {
+        topColor: isDark ? "rgba(16, 185, 129, 0.28)" : "rgba(16, 185, 129, 0.2)",
+        bottomColor: "transparent",
+        lineColor: "#10b981",
+        lineWidth: 2,
+      });
+      areaSeries.setData(formattedCandles.map((c) => ({ time: c.time, value: c.close })));
+    }
+
+    // SMA 20 Overlay (Amber)
+    if (showSMA20 && sma20Data.length > 0) {
+      const s20 = chart.addSeries(LineSeries, {
+        color: "#f59e0b",
+        lineWidth: 2,
+        title: "SMA 20",
+      });
+      s20.setData(sma20Data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+    }
+
+    // SMA 50 Overlay (Blue)
+    if (showSMA50 && sma50Data.length > 0) {
+      const s50 = chart.addSeries(LineSeries, {
+        color: "#3b82f6",
+        lineWidth: 2,
+        title: "SMA 50",
+      });
+      s50.setData(sma50Data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+    }
+
+    // SMA 200 Overlay (Purple)
+    if (showSMA200 && sma200Data.length > 0) {
+      const s200 = chart.addSeries(LineSeries, {
+        color: "#a855f7",
+        lineWidth: 2,
+        title: "SMA 200",
+      });
+      s200.setData(sma200Data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+    }
+
+    // EMA 20 Overlay (Cyan)
+    if (showEMA20 && ema20Data.length > 0) {
+      const e20 = chart.addSeries(LineSeries, {
+        color: "#06b6d4",
+        lineWidth: 2,
+        title: "EMA 20",
+      });
+      e20.setData(ema20Data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
     }
 
     chart.timeScale().fitContent();
 
-    // Crosshair move listener for inspection bar
+    // Crosshair inspection
     chart.subscribeCrosshairMove((param) => {
       if (
         !param.time ||
@@ -196,21 +288,170 @@ export function PriceChart({
       }
     });
 
-    // Resize observer
     const handleResize = () => {
-      if (container && chartInstanceRef.current) {
-        chartInstanceRef.current.applyOptions({ width: container.clientWidth });
+      if (container && mainChartRef.current) {
+        mainChartRef.current.applyOptions({ width: container.clientWidth });
       }
     };
-
     window.addEventListener("resize", handleResize);
 
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.remove();
-      chartInstanceRef.current = null;
+      mainChartRef.current = null;
     };
-  }, [candles, chartType, isDark, activeRange]);
+  }, [
+    candles,
+    chartType,
+    isDark,
+    activeRange,
+    showSMA20,
+    showSMA50,
+    showSMA200,
+    showEMA20,
+    showVolume,
+    sma20Data,
+    sma50Data,
+    sma200Data,
+    ema20Data,
+  ]);
+
+  // Separate Pane: RSI (14)
+  React.useEffect(() => {
+    if (!showRSI || !rsiContainerRef.current) return;
+    const container = rsiContainerRef.current;
+    container.innerHTML = "";
+
+    const rsiChart = createChart(container, {
+      width: container.clientWidth,
+      height: 140,
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: isDark ? "#a1a1aa" : "#71717a",
+        fontSize: 10,
+      },
+      grid: {
+        vertLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "#f4f4f5" },
+        horzLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "#f4f4f5" },
+      },
+      rightPriceScale: {
+        borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "#e4e4e7",
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        visible: false,
+      },
+    });
+    rsiChartRef.current = rsiChart;
+
+    const rsiSeries = rsiChart.addSeries(LineSeries, {
+      color: "#8b5cf6",
+      lineWidth: 2,
+    });
+    rsiSeries.setData(rsi14Data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+
+    // 70 Overbought and 30 Oversold reference lines
+    rsiSeries.createPriceLine({
+      price: 70,
+      color: isDark ? "rgba(239, 68, 68, 0.6)" : "rgba(239, 68, 68, 0.7)",
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: "Overbought (70)",
+    });
+    rsiSeries.createPriceLine({
+      price: 30,
+      color: isDark ? "rgba(16, 185, 129, 0.6)" : "rgba(16, 185, 129, 0.7)",
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: "Oversold (30)",
+    });
+
+    rsiChart.timeScale().fitContent();
+
+    const handleResize = () => {
+      if (container && rsiChartRef.current) {
+        rsiChartRef.current.applyOptions({ width: container.clientWidth });
+      }
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      rsiChart.remove();
+      rsiChartRef.current = null;
+    };
+  }, [showRSI, rsi14Data, isDark]);
+
+  // Separate Pane: MACD (12, 26, 9)
+  React.useEffect(() => {
+    if (!showMACD || !macdContainerRef.current) return;
+    const container = macdContainerRef.current;
+    container.innerHTML = "";
+
+    const macdChart = createChart(container, {
+      width: container.clientWidth,
+      height: 140,
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: isDark ? "#a1a1aa" : "#71717a",
+        fontSize: 10,
+      },
+      grid: {
+        vertLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "#f4f4f5" },
+        horzLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "#f4f4f5" },
+      },
+      rightPriceScale: {
+        borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "#e4e4e7",
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        visible: false,
+      },
+    });
+    macdChartRef.current = macdChart;
+
+    const histSeries = macdChart.addSeries(HistogramSeries, {
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+    });
+    const macdLineSeries = macdChart.addSeries(LineSeries, {
+      color: "#3b82f6",
+      lineWidth: 2,
+    });
+    const signalLineSeries = macdChart.addSeries(LineSeries, {
+      color: "#f59e0b",
+      lineWidth: 2,
+    });
+
+    histSeries.setData(
+      macdData.map((d) => ({
+        time: d.time as UTCTimestamp,
+        value: d.histogram,
+        color:
+          d.histogram >= 0
+            ? isDark ? "rgba(16, 185, 129, 0.6)" : "rgba(16, 185, 129, 0.7)"
+            : isDark ? "rgba(239, 68, 68, 0.6)" : "rgba(239, 68, 68, 0.7)",
+      }))
+    );
+    macdLineSeries.setData(macdData.map((d) => ({ time: d.time as UTCTimestamp, value: d.macd })));
+    signalLineSeries.setData(macdData.map((d) => ({ time: d.time as UTCTimestamp, value: d.signal })));
+
+    macdChart.timeScale().fitContent();
+
+    const handleResize = () => {
+      if (container && macdChartRef.current) {
+        macdChartRef.current.applyOptions({ width: container.clientWidth });
+      }
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      macdChart.remove();
+      macdChartRef.current = null;
+    };
+  }, [showMACD, macdData, isDark]);
 
   const latestCandle = candles[candles.length - 1] || null;
   const inspected = hoveredPoint || latestCandle;
@@ -240,13 +481,12 @@ export function PriceChart({
       {isMockData && !errorMessage && (
         <div className="flex items-center gap-2 rounded-lg border border-border/80 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
           <Clock className="size-3.5 text-muted-foreground" />
-          <span>Showing synthetic preview candles. Add <code className="font-mono text-[11px] text-foreground">TWELVE_DATA_API_KEY</code> to load real-time market historical data.</span>
+          <span>Showing local preview candles. Configure <code className="font-mono text-[11px] text-foreground">TWELVE_DATA_API_KEY</code> for live market historical data.</span>
         </div>
       )}
 
-      {/* Controls Bar: Type toggle, Hover details, Range buttons */}
+      {/* Controls Bar: Type toggle & Range buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
-        {/* Left: Chart Style Toggle & Indicators */}
         <div className="flex items-center gap-1.5">
           <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
             <button
@@ -256,7 +496,6 @@ export function PriceChart({
                   ? "bg-background text-foreground shadow-2xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
-              title="Candlestick chart"
             >
               <CandlestickChart className="size-3.5" />
               <span>Candles</span>
@@ -268,7 +507,6 @@ export function PriceChart({
                   ? "bg-background text-foreground shadow-2xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
-              title="Line area chart"
             >
               <LineChartIcon className="size-3.5" />
               <span>Line</span>
@@ -280,7 +518,7 @@ export function PriceChart({
           </Badge>
         </div>
 
-        {/* Right: Time Range Buttons */}
+        {/* Range Buttons */}
         <div className="flex items-center gap-1 self-start sm:self-auto">
           {RANGES.map((range) => {
             const isActive = activeRange === range;
@@ -299,6 +537,151 @@ export function PriceChart({
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* Indicator Overlay & Oscillator Toggles Strip */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-1">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-[11px] font-medium text-muted-foreground mr-1 flex items-center gap-1">
+            <SlidersHorizontal className="size-3 text-muted-foreground" />
+            Overlays:
+          </span>
+
+          {/* SMA 20 */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowSMA20((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showSMA20
+                  ? "bg-amber-500/15 border-amber-500/50 text-amber-700 dark:text-amber-300"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <span className="size-1.5 rounded-full bg-amber-500" />
+              SMA 20
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">20-Day Simple Moving Average</p>
+              <p className="text-muted-foreground mt-0.5">Short-term trend direction. Shows average closing price over the last 20 sessions.</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* SMA 50 */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowSMA50((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showSMA50
+                  ? "bg-blue-500/15 border-blue-500/50 text-blue-700 dark:text-blue-300"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <span className="size-1.5 rounded-full bg-blue-500" />
+              SMA 50
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">50-Day Simple Moving Average</p>
+              <p className="text-muted-foreground mt-0.5">Medium-term trend benchmark watched closely by institutional traders.</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* SMA 200 */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowSMA200((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showSMA200
+                  ? "bg-purple-500/15 border-purple-500/50 text-purple-700 dark:text-purple-300"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <span className="size-1.5 rounded-full bg-purple-500" />
+              SMA 200
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">200-Day Simple Moving Average</p>
+              <p className="text-muted-foreground mt-0.5">The primary long-term bull/bear dividing line. Price above indicates secular uptrend.</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* EMA 20 */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowEMA20((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showEMA20
+                  ? "bg-cyan-500/15 border-cyan-500/50 text-cyan-700 dark:text-cyan-300"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <span className="size-1.5 rounded-full bg-cyan-500" />
+              EMA 20
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">20-Day Exponential Moving Average</p>
+              <p className="text-muted-foreground mt-0.5">Places greater weight on recent candles, reacting faster to sudden momentum shifts.</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Volume */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowVolume((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showVolume
+                  ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              Volume
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">Trading Volume</p>
+              <p className="text-muted-foreground mt-0.5">Shows number of shares bought and sold. High volume validates price breakout moves.</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Oscillators: RSI & MACD toggles */}
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-[11px] font-medium text-muted-foreground mr-1">Panes:</span>
+
+          {/* RSI (14) */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowRSI((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showRSI
+                  ? "bg-violet-500/15 border-violet-500/50 text-violet-700 dark:text-violet-300 font-semibold"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              RSI (14)
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">Relative Strength Index (14)</p>
+              <p className="text-muted-foreground mt-0.5">Measures momentum from 0 to 100. Over 70 suggests overbought; below 30 suggests oversold.</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* MACD */}
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setShowMACD((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                showMACD
+                  ? "bg-sky-500/15 border-sky-500/50 text-sky-700 dark:text-sky-300 font-semibold"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              MACD (12, 26, 9)
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <p className="font-semibold text-foreground">Moving Average Convergence Divergence</p>
+              <p className="text-muted-foreground mt-0.5">Shows relationship between two EMAs. MACD crossing above signal line hints at bullish momentum.</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -330,7 +713,7 @@ export function PriceChart({
         </div>
       )}
 
-      {/* Interactive Chart Canvas Container */}
+      {/* Interactive Main Canvas */}
       <div className="relative w-full overflow-hidden rounded-xl">
         {isLoading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 backdrop-blur-2xs">
@@ -340,8 +723,45 @@ export function PriceChart({
             </div>
           </div>
         )}
-        <div ref={chartContainerRef} className="w-full" />
+        <div ref={mainChartContainerRef} className="w-full" />
       </div>
+
+      {/* Separate Pane: RSI (14) */}
+      {showRSI && (
+        <div className="border-t border-border/60 pt-3 space-y-1">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-violet-600 dark:text-violet-400">RSI (14)</span>
+              <span className="text-muted-foreground text-[11px]">
+                Current: {rsi14Data.length > 0 ? rsi14Data[rsi14Data.length - 1].value : "--"}
+              </span>
+            </div>
+            <span className="text-[10px] text-muted-foreground">Overbought: 70 | Oversold: 30</span>
+          </div>
+          <div ref={rsiContainerRef} className="w-full" />
+        </div>
+      )}
+
+      {/* Separate Pane: MACD (12, 26, 9) */}
+      {showMACD && (
+        <div className="border-t border-border/60 pt-3 space-y-1">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sky-600 dark:text-sky-400">MACD (12, 26, 9)</span>
+              <span className="text-[11px] text-muted-foreground">
+                Line: {macdData.length > 0 ? macdData[macdData.length - 1].macd : "--"} | Signal:{" "}
+                {macdData.length > 0 ? macdData[macdData.length - 1].signal : "--"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="text-sky-500">■ MACD</span>
+              <span className="text-amber-500">■ Signal</span>
+              <span className="text-emerald-500">■ Histogram</span>
+            </div>
+          </div>
+          <div ref={macdContainerRef} className="w-full" />
+        </div>
+      )}
     </div>
   );
 }

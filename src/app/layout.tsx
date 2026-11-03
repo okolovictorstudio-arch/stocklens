@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Navbar } from "@/components/layout/Navbar";
 import { FeatureWarningBanner } from "@/components/layout/FeatureWarningBanner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { getAllFeaturesStatus } from "@/lib/env";
 import "./globals.css";
 
@@ -43,15 +44,17 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <FeatureWarningBanner features={featureStatuses} />
-          <Navbar isSearchEnabled={finnhubConfigured} />
-          <main className="flex-1 flex flex-col">{children}</main>
-          <footer className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
-            <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <p>StockLens — Academic project. Free-tier APIs. Non-commercial.</p>
-              <p className="text-[11px]">Informational only. Not financial advice.</p>
-            </div>
-          </footer>
+          <TooltipProvider delay={150}>
+            <FeatureWarningBanner features={featureStatuses} />
+            <Navbar isSearchEnabled={finnhubConfigured} />
+            <main className="flex-1 flex flex-col">{children}</main>
+            <footer className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
+              <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <p>StockLens — Academic project. Free-tier APIs. Non-commercial.</p>
+                <p className="text-[11px]">Informational only. Not financial advice.</p>
+              </div>
+            </footer>
+          </TooltipProvider>
         </ThemeProvider>
       </body>
     </html>
