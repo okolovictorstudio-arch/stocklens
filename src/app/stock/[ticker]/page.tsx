@@ -1,12 +1,15 @@
 import { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, AlertCircle, Sparkles } from "lucide-react";
+import { ArrowLeft, AlertCircle, Database } from "lucide-react";
 import { getStockQuote, getStockProfile, getStockFundamentals } from "@/lib/finnhub";
 import { getHistoricalCandles } from "@/lib/twelvedata";
 import { StockHeader } from "@/components/stock/StockHeader";
 import { PriceChartLazy } from "@/components/stock/PriceChartLazy";
 import { FundamentalsGrid } from "@/components/stock/FundamentalsGrid";
+import { AIAnalysisCard } from "@/components/stock/AIAnalysisCard";
 import { buttonVariants } from "@/components/ui/button";
+
+export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ ticker: string }>;
@@ -111,22 +114,25 @@ export default async function StockDetailPage({ params }: PageProps) {
         currentPrice={quote.currentPrice}
       />
 
-      {/* Phase 4 Preview: AI Synthesis */}
+      {/* AI Analysis & Metric Interpretation */}
+      <AIAnalysisCard symbol={cleanTicker} />
+
+      {/* Phase 5 Preview: Watchlist & Persistent Cache */}
       <div className="rounded-2xl border border-dashed border-border/80 bg-muted/10 p-6 flex flex-col justify-between space-y-4">
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            <Sparkles className="size-4 text-sky-500" />
-            <span>Phase 4 — Gemini Plain-Language Synthesis</span>
+            <Database className="size-4 text-emerald-500" />
+            <span>Phase 5 — Watchlist & Supabase Persistent Cache</span>
           </div>
           <h3 className="text-base font-semibold text-foreground">
-            AI Stock Analysis & Metric Interpretation
+            Postgres Watchlist & Edge Caching
           </h3>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Sends real calculated indicators (SMA, EMA, RSI, MACD) and verified fundamentals (Market Cap, P/E, EPS, 52W Range) to Google Gemini 2.0 Flash. Outputs strictly validated JSON summarizing strengths, risks, technical outlook, and plain-English metric explanations without hallucinations.
+            Persistent anonymous device watchlists, dashboard mini sparklines, top movers, and multi-tiered Supabase Postgres caching to permanently guard free API limits across all serverless cold starts.
           </p>
         </div>
         <div className="text-[11px] text-muted-foreground/70 font-mono">
-          Status: Ready for Phase 4 implementation
+          Status: Next in queue
         </div>
       </div>
     </div>

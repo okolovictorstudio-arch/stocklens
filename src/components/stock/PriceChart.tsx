@@ -19,9 +19,9 @@ import {
   RefreshCw,
   Clock,
   SlidersHorizontal,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -77,13 +77,14 @@ export function PriceChart({
   const [rateLimited, setRateLimited] = React.useState(initialRateLimited);
   const [errorMessage, setErrorMessage] = React.useState(initialErrorMessage);
   const [hoveredPoint, setHoveredPoint] = React.useState<CandleDataPoint | null>(null);
+  const [showAdvancedTools, setShowAdvancedTools] = React.useState(false);
 
-  // Indicator Toggle Overlays
+  // Indicator Toggle Overlays (Hidden by default for beginner simplicity)
   const [showSMA20, setShowSMA20] = React.useState(false);
   const [showSMA50, setShowSMA50] = React.useState(false);
   const [showSMA200, setShowSMA200] = React.useState(false);
   const [showEMA20, setShowEMA20] = React.useState(false);
-  const [showVolume, setShowVolume] = React.useState(true);
+  const [showVolume, setShowVolume] = React.useState(false);
 
   // Oscillators in separate panes
   const [showRSI, setShowRSI] = React.useState(false);
@@ -513,9 +514,24 @@ export function PriceChart({
             </button>
           </div>
 
-          <Badge variant="outline" className="hidden sm:inline-flex text-[10px] font-mono font-normal text-muted-foreground">
-            Lightweight Charts™
-          </Badge>
+          <button
+            onClick={() => setShowAdvancedTools((v) => !v)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer border ${
+              showAdvancedTools
+                ? "bg-foreground/10 border-foreground/30 text-foreground font-semibold"
+                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+            aria-expanded={showAdvancedTools}
+            title="Toggle technical indicators (SMA, EMA, RSI, MACD, Volume)"
+          >
+            <SlidersHorizontal className="size-3" />
+            <span>Advanced tools</span>
+            <ChevronDown
+              className={`size-3 transition-transform duration-200 ${
+                showAdvancedTools ? "rotate-180" : ""
+              }`}
+            />
+          </button>
         </div>
 
         {/* Range Buttons */}
@@ -540,15 +556,16 @@ export function PriceChart({
         </div>
       </div>
 
-      {/* Indicator Overlay & Oscillator Toggles Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-1">
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-[11px] font-medium text-muted-foreground mr-1 flex items-center gap-1">
-            <SlidersHorizontal className="size-3 text-muted-foreground" />
-            Overlays:
-          </span>
+      {/* Indicator Overlay & Oscillator Toggles Strip (Shown only when Advanced tools is open) */}
+      {showAdvancedTools && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-1 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-medium text-muted-foreground mr-1 flex items-center gap-1">
+              <SlidersHorizontal className="size-3 text-muted-foreground" />
+              Overlays:
+            </span>
 
-          {/* SMA 20 */}
+            {/* SMA 20 */}
           <Tooltip>
             <TooltipTrigger
               onClick={() => setShowSMA20((v) => !v)}
@@ -684,6 +701,7 @@ export function PriceChart({
           </Tooltip>
         </div>
       </div>
+      )}
 
       {/* Floating Hover Metric Bar */}
       {inspected && (

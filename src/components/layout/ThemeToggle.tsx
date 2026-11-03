@@ -18,10 +18,10 @@ export function ThemeToggle() {
       <Button
         variant="ghost"
         size="icon"
-        className="size-9 rounded-md text-muted-foreground"
+        className="min-h-[44px] min-w-[44px] size-11 rounded-xl text-muted-foreground"
         aria-label="Toggle theme"
       >
-        <span className="size-4" />
+        <span className="size-5" />
       </Button>
     );
   }
@@ -33,9 +33,9 @@ export function ThemeToggle() {
   };
 
   const getIcon = () => {
-    if (theme === "dark") return <Moon className="size-4 text-sky-400" />;
-    if (theme === "light") return <Sun className="size-4 text-amber-500" />;
-    return <Monitor className="size-4 text-muted-foreground" />;
+    if (theme === "dark") return <Moon className="size-5 text-sky-400" />;
+    if (theme === "light") return <Sun className="size-5 text-amber-500" />;
+    return <Monitor className="size-5 text-muted-foreground" />;
   };
 
   const getLabel = () => {
@@ -49,7 +49,7 @@ export function ThemeToggle() {
       variant="ghost"
       size="icon"
       onClick={cycleTheme}
-      className="size-9 rounded-md transition-colors hover:bg-muted"
+      className="min-h-[44px] min-w-[44px] size-11 rounded-xl transition-colors hover:bg-muted cursor-pointer"
       title={getLabel()}
       aria-label={getLabel()}
     >

@@ -8,7 +8,6 @@ import {
   Coins,
   Scale,
   Activity,
-  Layers,
   BarChart2,
   Calendar,
 } from "lucide-react";
@@ -157,15 +156,9 @@ export function FundamentalsGrid({
             title="Market Cap"
             value={formatMarketCap(fundamentals.marketCap)}
             tooltipTitle="Market Capitalization"
-            tooltipExplanation="The total market value of all outstanding shares. Large cap (> $10B) companies typically have more stability, while small caps have higher risk and growth potential."
+            tooltipExplanation={`The whole company is valued at about ${formatMarketCap(fundamentals.marketCap)}. It shows the total price tag if someone were to buy every single share.`}
             icon={<Scale className="size-3.5" />}
-            subtitle={
-              fundamentals.marketCap > 200000
-                ? "Mega Cap (>$200B)"
-                : fundamentals.marketCap > 10000
-                ? "Large Cap (>$10B)"
-                : "Mid/Small Cap"
-            }
+            subtitle={`Valued at ${formatMarketCap(fundamentals.marketCap)}`}
           />
         )}
 
@@ -175,9 +168,9 @@ export function FundamentalsGrid({
             title="P/E Ratio"
             value={fundamentals.peRatio.toFixed(1)}
             tooltipTitle="Price-to-Earnings Ratio"
-            tooltipExplanation="How many dollars investors pay for each $1 of company earnings. A lower P/E may signify good value, while a higher P/E reflects rapid future growth expectations."
+            tooltipExplanation={`You pay about $${fundamentals.peRatio.toFixed(1)} for every $1 the company earns in a year. Higher numbers mean investors expect fast growth; lower numbers mean a lower price tag relative to current earnings.`}
             icon={<Percent className="size-3.5" />}
-            subtitle={fundamentals.peRatio > 40 ? "High Growth Multiple" : "Moderate Valuation"}
+            subtitle={`$${fundamentals.peRatio.toFixed(1)} per $1 of earnings`}
           />
         )}
 
@@ -186,10 +179,10 @@ export function FundamentalsGrid({
           <MetricCard
             title="EPS (TTM)"
             value={`$${fundamentals.eps.toFixed(2)}`}
-            tooltipTitle="Earnings Per Share (Trailing 12 Months)"
-            tooltipExplanation="The portion of a company's profit allocated to each share of common stock. Higher and growing EPS indicates sustainable corporate profitability."
+            tooltipTitle="Earnings Per Share"
+            tooltipExplanation={`Profit for each individual share of the company: the company generated $${fundamentals.eps.toFixed(2)} in profit per share over the last 12 months.`}
             icon={<TrendingUp className="size-3.5" />}
-            subtitle="Trailing 12 Months"
+            subtitle="Profit per share (12 mo)"
           />
         )}
 
@@ -202,13 +195,13 @@ export function FundamentalsGrid({
                 ? `${fundamentals.dividendYield.toFixed(2)}%`
                 : "0.00%"
             }
-            tooltipTitle="Indicated Annual Dividend Yield"
-            tooltipExplanation="The annual cash payout distributed to shareholders expressed as a percentage of the share price. Yields above 0% provide passive cash returns."
+            tooltipTitle="Annual Dividend Yield"
+            tooltipExplanation="Annual cash payout you receive for owning shares, as a percentage of the stock price. If 0%, the company reinvests all money back into the business."
             icon={<Coins className="size-3.5" />}
             subtitle={
               fundamentals.dividendYield > 0
-                ? "Annual Payout"
-                : "No Dividend (Reinvests Growth)"
+                ? `${fundamentals.dividendYield.toFixed(2)}% cash payout / yr`
+                : "No cash dividend (reinvests)"
             }
           />
         )}
@@ -218,15 +211,15 @@ export function FundamentalsGrid({
           <MetricCard
             title="Beta"
             value={fundamentals.beta.toFixed(2)}
-            tooltipTitle="Beta (Market Volatility Gauge)"
-            tooltipExplanation="Measures how wildly the stock moves relative to the overall market (S&P 500 = 1.0). A Beta > 1 means higher volatility than average; < 1 means calmer price action."
+            tooltipTitle="Beta (Market Volatility)"
+            tooltipExplanation={`Moves more or less than the overall stock market (1.0 moves the same). At ${fundamentals.beta.toFixed(2)}, this stock tends to swing ${fundamentals.beta > 1 ? "more" : "less"} than average.`}
             icon={<Activity className="size-3.5" />}
             subtitle={
               fundamentals.beta > 1.2
-                ? "High Volatility"
+                ? "Swings more than the market"
                 : fundamentals.beta < 0.8
-                ? "Low Volatility (Defensive)"
-                : "Market Average"
+                ? "Calmer than the market"
+                : "Moves with the market"
             }
           />
         )}
@@ -235,11 +228,11 @@ export function FundamentalsGrid({
         {fundamentals.roe !== null && (
           <MetricCard
             title="Return on Equity"
-            value={`${fundamentals.roe.toFixed(1)}%` }
+            value={`${fundamentals.roe.toFixed(1)}%`}
             tooltipTitle="Return on Equity (ROE)"
-            tooltipExplanation="Measures how efficiently company management generates profits from the net assets funded by shareholders. A consistently high ROE (>15%) is a sign of a strong economic moat."
-            icon={<Layers className="size-3.5" />}
-            subtitle="Management Efficiency"
+            tooltipExplanation={`How effectively the company turns shareholder investment into profit. For every $100 of equity, the company produced about $${fundamentals.roe.toFixed(1)} in net profits.`}
+            icon={<BarChart2 className="size-3.5" />}
+            subtitle="Profit efficiency gauge"
           />
         )}
 

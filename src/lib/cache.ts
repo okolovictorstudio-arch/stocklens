@@ -24,6 +24,7 @@ export const CACHE_TTL = {
   SEARCH: 3600, // 1 hour (symbol search)
   FUNDAMENTALS: 86400, // 24 hours (company profile, metrics, earnings)
   PROFILE: 86400, // 24 hours
+  AI_ANALYSIS: 21600, // 6 hours (AI stock analysis)
 } as const;
 
 // In-Memory Adapter with globalThis retention
