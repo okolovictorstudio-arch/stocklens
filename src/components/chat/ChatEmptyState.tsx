@@ -9,12 +9,12 @@ interface ChatEmptyStateProps {
 }
 
 const POPULAR_STOCKS = [
-  { name: "Apple", symbol: "AAPL", highlight: "Tech giant behind iPhone" },
-  { name: "Microsoft", symbol: "MSFT", highlight: "Windows, Azure & Office" },
-  { name: "Nvidia", symbol: "NVDA", highlight: "AI computing & graphics" },
-  { name: "Tesla", symbol: "TSLA", highlight: "Electric cars & batteries" },
-  { name: "Amazon", symbol: "AMZN", highlight: "Online retail & AWS cloud" },
-  { name: "Google", symbol: "GOOGL", highlight: "Search, Android & YouTube" },
+  { name: "Apple", symbol: "AAPL", highlight: "iPhone and Mac" },
+  { name: "Microsoft", symbol: "MSFT", highlight: "Windows and Office" },
+  { name: "Nvidia", symbol: "NVDA", highlight: "AI chips" },
+  { name: "Tesla", symbol: "TSLA", highlight: "Electric cars" },
+  { name: "Amazon", symbol: "AMZN", highlight: "Online shopping" },
+  { name: "Google", symbol: "GOOGL", highlight: "Search and Android" },
 ];
 
 export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
@@ -106,22 +106,28 @@ export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
   };
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4 sm:px-6 py-8 sm:py-16 text-center max-w-2xl mx-auto w-full">
+    <div className="flex flex-col items-center px-4 sm:px-6 pt-5 pb-8 sm:py-16 text-center max-w-2xl mx-auto w-full my-auto">
       {/* Calm Claude-style header */}
-      <div className="space-y-3 mb-8">
-        <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-xs">
-          <Sparkles className="size-7 text-sky-400" />
+      <div className="space-y-3 mb-6 sm:mb-8">
+        <div className="mx-auto flex size-12 sm:size-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-xs">
+          <Sparkles className="size-6 sm:size-7 text-sky-400" />
         </div>
-        <h1 className="text-2xl sm:text-4xl font-bold tracking-tight text-foreground">
+        <h1
+          className="text-2xl sm:text-4xl font-bold tracking-tight text-foreground text-balance"
+          style={{ textWrap: "balance" }}
+        >
           Which stock do you want to understand?
         </h1>
-        <p className="text-base sm:text-lg text-muted-foreground leading-relaxed max-w-lg mx-auto">
+        <p
+          className="text-sm sm:text-lg text-muted-foreground leading-relaxed max-w-lg mx-auto text-balance"
+          style={{ textWrap: "balance" }}
+        >
           Search any company or ticker. We&apos;ll explain the price, numbers, and trends in plain English—no Wall Street jargon.
         </p>
       </div>
 
       {/* Big Search Input with Autocomplete */}
-      <div ref={containerRef} className="relative w-full max-w-xl text-left mb-8">
+      <div ref={containerRef} className="relative w-full max-w-xl text-left mb-6 sm:mb-8">
         <div className="relative flex items-center shadow-xs rounded-2xl border border-border/80 bg-card transition-all focus-within:ring-2 focus-within:ring-ring/40 focus-within:border-foreground/30">
           <Search className="absolute left-4 size-5 text-muted-foreground pointer-events-none" />
           <input
@@ -144,8 +150,8 @@ export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
               if (query.trim() && results.length > 0) setIsOpen(true);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Search company name or ticker (e.g. Apple or AAPL)..."
-            className="w-full pl-12 pr-12 h-14 bg-transparent text-base text-foreground placeholder:text-muted-foreground/70 outline-none rounded-2xl"
+            placeholder="Search a company or ticker"
+            className="w-full pl-12 pr-12 h-13 sm:h-14 bg-transparent text-base text-foreground placeholder:text-muted-foreground/70 outline-none rounded-2xl"
           />
           <div className="absolute right-2 flex items-center">
             {isLoading ? (
@@ -224,29 +230,29 @@ export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
         )}
       </div>
 
-      {/* 6 Popular Stock Chips (min 44x44px tap targets, spacious layout) */}
-      <div className="w-full space-y-3">
-        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+      {/* 6 Popular Stock Chips (min 44x44px tap targets, 2 cols on mobile, 3 cols from md) */}
+      <div className="w-full space-y-2.5 sm:space-y-3">
+        <p className="text-xs sm:text-sm font-semibold text-muted-foreground uppercase tracking-wider">
           Or tap a popular company to start:
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 w-full">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3 w-full">
           {POPULAR_STOCKS.map((stock) => (
             <button
               key={stock.symbol}
               type="button"
               onClick={() => handleSelect(stock.symbol, stock.name)}
-              className="flex min-h-[56px] items-center justify-between gap-3 rounded-xl border border-border/80 bg-card px-4 py-3 text-left transition-all hover:border-foreground/30 hover:bg-muted/50 active:scale-[0.98] cursor-pointer shadow-2xs group"
+              className="flex min-h-[48px] sm:min-h-[56px] items-center justify-between gap-2 sm:gap-3 rounded-xl border border-border/80 bg-card px-3 sm:px-4 py-2.5 sm:py-3 text-left transition-all hover:border-foreground/30 hover:bg-muted/50 active:scale-[0.98] cursor-pointer shadow-2xs group"
             >
               <div className="overflow-hidden">
-                <div className="font-semibold text-base text-foreground group-hover:underline">
+                <div className="font-semibold text-sm sm:text-base text-foreground group-hover:underline truncate">
                   {stock.name}
                 </div>
-                <div className="text-sm text-muted-foreground truncate font-sans">
+                <div className="text-xs sm:text-sm text-muted-foreground truncate font-sans hidden sm:block">
                   {stock.highlight}
                 </div>
               </div>
-              <span className="text-sm font-mono font-medium text-muted-foreground/80 shrink-0 bg-muted/80 px-2 py-0.5 rounded-md">
+              <span className="text-xs sm:text-sm font-mono font-medium text-muted-foreground/80 shrink-0 bg-muted/80 px-1.5 sm:px-2 py-0.5 rounded-md">
                 {stock.symbol}
               </span>
             </button>

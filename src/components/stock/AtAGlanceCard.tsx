@@ -65,13 +65,13 @@ export function AtAGlanceCard({
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
               {companyName}
             </h2>
-            <span className="font-mono text-xs font-semibold text-muted-foreground bg-muted/80 px-2 py-0.5 rounded-md">
+            <span className="font-mono text-sm font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-md">
               {quote.symbol}
             </span>
           </div>
 
-          <p className="mt-1 text-xs sm:text-sm text-muted-foreground flex items-center gap-1.5">
-            <Building2 className="size-3.5 shrink-0 text-muted-foreground/70" />
+          <p className="mt-1 text-sm text-muted-foreground flex items-center gap-2">
+            <Building2 className="size-4 shrink-0 text-muted-foreground/70" />
             <span>{profile?.finnhubIndustry || "US Equities"}</span>
             {profile?.exchange && (
               <>
@@ -110,74 +110,74 @@ export function AtAGlanceCard({
 
       {/* 4 Plain-Language At-A-Glance Metric Chips */}
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+        <div className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
           <span>At a glance</span>
-          <span className="text-[11px] font-normal lowercase tracking-normal text-muted-foreground/70">
+          <span className="text-sm font-normal lowercase tracking-normal text-muted-foreground/70">
             (essential facts in plain language)
           </span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {/* 1. Company Size */}
-          <div className="rounded-xl border border-border/80 bg-muted/30 p-3.5 space-y-1.5 hover:border-foreground/20 transition-colors">
+          <div className="rounded-xl border border-border/80 bg-muted/30 p-4 space-y-2 hover:border-foreground/20 transition-colors">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <Scale className="size-3.5 text-muted-foreground/70" />
+              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <Scale className="size-4 text-muted-foreground/70" />
                 <span>Company size</span>
               </span>
               <Tooltip>
                 <TooltipTrigger
                   aria-label="Explain company size"
-                  className="p-1 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded-lg -mr-2 -mt-2"
                 >
-                  <HelpCircle className="size-3.5" />
+                  <HelpCircle className="size-4" />
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
+                <TooltipContent className="max-w-xs text-sm">
                   <p className="font-semibold text-foreground">Market Size</p>
-                  <p className="mt-0.5 text-muted-foreground leading-relaxed">
+                  <p className="mt-1 text-muted-foreground leading-relaxed">
                     {overview.companySize.explanation}
                   </p>
                 </TooltipContent>
               </Tooltip>
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between gap-2">
               <div className="text-base sm:text-lg font-bold text-foreground">
                 {overview.companySize.label}
               </div>
-              <span className="text-xs font-mono text-muted-foreground">
+              <span className="text-sm font-mono text-muted-foreground tabular-nums">
                 {overview.companySize.formattedCap}
               </span>
             </div>
           </div>
 
           {/* 2. Current Price Position */}
-          <div className="rounded-xl border border-border/80 bg-muted/30 p-3.5 space-y-1.5 hover:border-foreground/20 transition-colors">
+          <div className="rounded-xl border border-border/80 bg-muted/30 p-4 space-y-2 hover:border-foreground/20 transition-colors">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <Compass className="size-3.5 text-muted-foreground/70" />
+              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <Compass className="size-4 text-muted-foreground/70" />
                 <span>Yearly price range</span>
               </span>
               <Tooltip>
                 <TooltipTrigger
                   aria-label="Explain yearly price range"
-                  className="p-1 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded-lg -mr-2 -mt-2"
                 >
-                  <HelpCircle className="size-3.5" />
+                  <HelpCircle className="size-4" />
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
+                <TooltipContent className="max-w-xs text-sm">
                   <p className="font-semibold text-foreground">52-Week Position</p>
-                  <p className="mt-0.5 text-muted-foreground leading-relaxed">
+                  <p className="mt-1 text-muted-foreground leading-relaxed">
                     {overview.pricePosition.explanation}
                   </p>
                 </TooltipContent>
               </Tooltip>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="text-base sm:text-lg font-bold text-foreground">
                 {overview.pricePosition.label}
               </div>
               {overview.pricePosition.positionPct !== null && (
-                <div className="w-full bg-border/60 rounded-full h-1.5 overflow-hidden">
+                <div className="w-full bg-border/60 rounded-full h-2 overflow-hidden">
                   <div
                     className="bg-primary h-full rounded-full transition-all duration-300"
                     style={{ width: `${Math.min(100, Math.max(5, overview.pricePosition.positionPct))}%` }}
@@ -188,37 +188,37 @@ export function AtAGlanceCard({
           </div>
 
           {/* 3. Ups and Downs (Volatility) */}
-          <div className="rounded-xl border border-border/80 bg-muted/30 p-3.5 space-y-1.5 hover:border-foreground/20 transition-colors">
+          <div className="rounded-xl border border-border/80 bg-muted/30 p-4 space-y-2 hover:border-foreground/20 transition-colors">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <Activity className="size-3.5 text-muted-foreground/70" />
+              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <Activity className="size-4 text-muted-foreground/70" />
                 <span>Ups & downs</span>
               </span>
               <Tooltip>
                 <TooltipTrigger
                   aria-label="Explain price volatility"
-                  className="p-1 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded-lg -mr-2 -mt-2"
                 >
-                  <HelpCircle className="size-3.5" />
+                  <HelpCircle className="size-4" />
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
+                <TooltipContent className="max-w-xs text-sm">
                   <p className="font-semibold text-foreground">Price Stability</p>
-                  <p className="mt-0.5 text-muted-foreground leading-relaxed">
+                  <p className="mt-1 text-muted-foreground leading-relaxed">
                     {overview.volatility.explanation}
                   </p>
                 </TooltipContent>
               </Tooltip>
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between gap-2">
               <div className="text-base sm:text-lg font-bold text-foreground">
                 {overview.volatility.label}
               </div>
               {overview.volatility.maxDrawdownPct !== null ? (
-                <span className="text-xs font-mono text-muted-foreground">
+                <span className="text-sm font-mono text-muted-foreground tabular-nums">
                   -{overview.volatility.maxDrawdownPct}% dip
                 </span>
               ) : overview.volatility.beta !== null ? (
-                <span className="text-xs font-mono text-muted-foreground">
+                <span className="text-sm font-mono text-muted-foreground tabular-nums">
                   β {overview.volatility.beta.toFixed(2)}
                 </span>
               ) : null}
@@ -226,34 +226,34 @@ export function AtAGlanceCard({
           </div>
 
           {/* 4. Pays Dividends */}
-          <div className="rounded-xl border border-border/80 bg-muted/30 p-3.5 space-y-1.5 hover:border-foreground/20 transition-colors">
+          <div className="rounded-xl border border-border/80 bg-muted/30 p-4 space-y-2 hover:border-foreground/20 transition-colors">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <Coins className="size-3.5 text-muted-foreground/70" />
+              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <Coins className="size-4 text-muted-foreground/70" />
                 <span>Pays dividends?</span>
               </span>
               <Tooltip>
                 <TooltipTrigger
                   aria-label="Explain dividend payouts"
-                  className="p-1 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded-lg -mr-2 -mt-2"
                 >
-                  <HelpCircle className="size-3.5" />
+                  <HelpCircle className="size-4" />
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
+                <TooltipContent className="max-w-xs text-sm">
                   <p className="font-semibold text-foreground">Dividend Cash Payout</p>
-                  <p className="mt-0.5 text-muted-foreground leading-relaxed">
+                  <p className="mt-1 text-muted-foreground leading-relaxed">
                     {overview.dividend.explanation}
                   </p>
                 </TooltipContent>
               </Tooltip>
             </div>
-            <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline justify-between gap-2">
               <div className="text-base sm:text-lg font-bold text-foreground">
                 {overview.dividend.label}
               </div>
               <Badge
                 variant={overview.dividend.pays ? "default" : "secondary"}
-                className="text-[10px] font-medium"
+                className="text-xs font-medium"
               >
                 {overview.dividend.pays ? "Cash income" : "Growth focus"}
               </Badge>

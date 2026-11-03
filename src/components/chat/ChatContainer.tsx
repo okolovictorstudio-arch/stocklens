@@ -3,14 +3,20 @@
 import * as React from "react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { MobileTopBar } from "@/components/layout/MobileTopBar";
+import { FeatureWarningBanner } from "@/components/layout/FeatureWarningBanner";
 import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
 import { StockOverviewMessage } from "@/components/chat/StockOverviewMessage";
 import { saveRecentChat } from "@/lib/recent-chats";
 import { useSidebarCollapsed } from "@/lib/sidebar-state";
 import { ArrowLeft, Sparkles, Send } from "lucide-react";
 import type { ChatMessage, ChatActionType } from "@/types/chat";
+import type { FeatureStatus } from "@/lib/env";
 
-export function ChatContainer() {
+interface ChatContainerProps {
+  featureStatuses?: FeatureStatus[];
+}
+
+export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
   const [activeSymbol, setActiveSymbol] = React.useState<string | null>(null);
   const [activeCompanyName, setActiveCompanyName] = React.useState<string>("");
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = React.useState(false);
@@ -177,10 +183,13 @@ export function ChatContainer() {
           isDrawerOpen={isMobileDrawerOpen}
         />
 
+        {/* Development Setup Warning Banner (Dev mode only, offset cleanly in main column) */}
+        <FeatureWarningBanner features={featureStatuses} />
+
         {/* Dynamic Chat Body */}
         {!activeSymbol ? (
           // Empty State: Centered search & popular chips
-          <main className="flex-1 overflow-y-auto flex items-center justify-center p-4 sm:p-6 overflow-x-hidden">
+          <main className="flex-1 overflow-y-auto flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-x-hidden">
             <ChatEmptyState onSelectStock={handleSelectStock} />
           </main>
         ) : (

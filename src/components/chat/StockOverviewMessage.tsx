@@ -136,10 +136,9 @@ export function StockOverviewMessage({
         <Button
           onClick={() => setRetryCount((c) => c + 1)}
           variant="outline"
-          size="sm"
-          className="gap-2 cursor-pointer"
+          className="min-h-[44px] px-4 gap-2 text-sm rounded-xl cursor-pointer"
         >
-          <RefreshCw className="size-3.5" />
+          <RefreshCw className="size-4" />
           <span>Try again</span>
         </Button>
       </div>
@@ -168,32 +167,32 @@ export function StockOverviewMessage({
       {/* 3. Plain-Language AI Explanation */}
       <AIAnalysisCard symbol={data.symbol} />
 
-      {/* 4. Verified Fundamentals Grid with Beginner Analogies */}
-      <FundamentalsGrid
-        fundamentals={data.fundamentals}
-        currentPrice={data.quote.currentPrice}
-      />
-
-      {/* 5. Quick-Question Chips / Buttons Below Response */}
+      {/* 4. Quick-Question Chips / Buttons Under Explanation */}
       <div className="rounded-2xl border border-border/70 bg-card/60 p-4 sm:p-5 space-y-3">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          <MessageCircleQuestion className="size-4 text-primary" />
+        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <MessageCircleQuestion className="size-4.5 text-primary" />
           <span>Quick questions about {data.profile?.name || companyName || data.symbol}</span>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2.5">
           {QUICK_QUESTIONS.map((q, idx) => (
             <button
               key={idx}
               type="button"
               onClick={() => onSelectQuestion?.(q.text, q.actionType)}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-xl border border-border/80 bg-background px-3.5 py-2 text-xs sm:text-sm font-medium text-foreground hover:bg-muted hover:border-foreground/30 active:scale-[0.98] transition-all cursor-pointer shadow-2xs"
+              className="inline-flex min-h-[44px] items-center justify-center rounded-xl border border-border/80 bg-background px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted hover:border-foreground/30 active:scale-[0.98] transition-all cursor-pointer shadow-2xs"
             >
               {q.text}
             </button>
           ))}
         </div>
       </div>
+
+      {/* 5. Verified Fundamentals Grid with Beginner Analogies */}
+      <FundamentalsGrid
+        fundamentals={data.fundamentals}
+        currentPrice={data.quote.currentPrice}
+      />
     </div>
   );
 }

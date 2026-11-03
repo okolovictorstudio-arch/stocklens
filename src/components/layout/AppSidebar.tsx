@@ -189,14 +189,18 @@ export function AppSidebar({
           </button>
         </div>
 
-        {/* Action: New Chat Button (min 44px tap target) */}
+        {/* Action: New Chat Button (min 44px tap target, highlighted on empty home screen) */}
         <div className="p-3">
           <button
             onClick={() => {
               onNewChat();
               if (isOpenOnMobile) handleClose();
             }}
-            className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-sidebar-border bg-foreground px-4 py-2.5 text-base font-semibold text-background shadow-xs transition-opacity hover:opacity-90 active:scale-[0.99] cursor-pointer ${
+            className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-base font-semibold shadow-xs transition-all cursor-pointer ${
+              !activeSymbol
+                ? "bg-foreground text-background ring-2 ring-primary/20 shadow-sm"
+                : "border border-sidebar-border bg-sidebar-accent/50 text-sidebar-foreground hover:bg-sidebar-accent"
+            } ${
               isCollapsed ? "lg:px-0" : ""
             }`}
             title="Start a new chat"
@@ -215,11 +219,7 @@ export function AppSidebar({
                 onNewChat();
                 if (isOpenOnMobile) handleClose();
               }}
-              className={`flex min-h-[44px] w-full items-center gap-3 rounded-xl px-3 py-2.5 text-base font-medium transition-colors cursor-pointer ${
-                !activeSymbol
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-                  : "text-sidebar-foreground/75 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-              }`}
+              className="flex min-h-[44px] w-full items-center gap-3 rounded-xl px-3 py-2.5 text-base font-medium transition-colors cursor-pointer text-sidebar-foreground/75 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
             >
               <LayoutDashboard className="size-5 shrink-0" />
               {!isCollapsed && <span>Dashboard</span>}
@@ -231,7 +231,6 @@ export function AppSidebar({
             {!isCollapsed && (
               <div className="flex items-center justify-between px-3 text-sm font-semibold text-sidebar-foreground/60 uppercase tracking-wider">
                 <span>Watchlist</span>
-                <span className="text-sm font-normal text-sidebar-foreground/50">Phase 5</span>
               </div>
             )}
             {!isCollapsed ? (
@@ -245,7 +244,7 @@ export function AppSidebar({
                 </p>
               </div>
             ) : (
-              <div className="flex justify-center py-2" title="Watchlist (Phase 5)">
+              <div className="flex justify-center py-2" title="Watchlist">
                 <Bookmark className="size-5 text-sidebar-foreground/50" />
               </div>
             )}

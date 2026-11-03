@@ -77,12 +77,12 @@ export function StockHeader({ quote, profile }: StockHeaderProps) {
           </p>
         </div>
 
-        {/* Watchlist toggle button (placeholder for Phase 5) */}
+        {/* Watchlist toggle button */}
         <Button
           variant="outline"
           size="sm"
           className="self-start sm:self-auto gap-1.5 text-xs rounded-lg"
-          title="Add to Watchlist (Phase 5)"
+          title="Add to Watchlist"
         >
           <Bookmark className="size-3.5 text-muted-foreground" />
           <span>Watchlist</span>

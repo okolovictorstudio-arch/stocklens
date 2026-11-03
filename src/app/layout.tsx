@@ -1,9 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
-import { FeatureWarningBanner } from "@/components/layout/FeatureWarningBanner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getAllFeaturesStatus } from "@/lib/env";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,8 +27,6 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const featureStatuses = getAllFeaturesStatus();
-
   return (
     <html
       lang="en"
@@ -45,10 +41,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <TooltipProvider delay={150}>
-            <FeatureWarningBanner features={featureStatuses} />
-            <div className="flex-1 min-h-0 w-full overflow-hidden">
-              {children}
-            </div>
+            {children}
           </TooltipProvider>
         </ThemeProvider>
       </body>

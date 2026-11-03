@@ -1,6 +1,6 @@
 import { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, AlertCircle, Database } from "lucide-react";
+import { ArrowLeft, AlertCircle } from "lucide-react";
 import { getStockQuote, getStockProfile, getStockFundamentals } from "@/lib/finnhub";
 import { getHistoricalCandles } from "@/lib/twelvedata";
 import { StockHeader } from "@/components/stock/StockHeader";
@@ -116,25 +116,6 @@ export default async function StockDetailPage({ params }: PageProps) {
 
       {/* AI Analysis & Metric Interpretation */}
       <AIAnalysisCard symbol={cleanTicker} />
-
-      {/* Phase 5 Preview: Watchlist & Persistent Cache */}
-      <div className="rounded-2xl border border-dashed border-border/80 bg-muted/10 p-6 flex flex-col justify-between space-y-4">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            <Database className="size-4 text-emerald-500" />
-            <span>Phase 5 — Watchlist & Supabase Persistent Cache</span>
-          </div>
-          <h3 className="text-base font-semibold text-foreground">
-            Postgres Watchlist & Edge Caching
-          </h3>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Persistent anonymous device watchlists, dashboard mini sparklines, top movers, and multi-tiered Supabase Postgres caching to permanently guard free API limits across all serverless cold starts.
-          </p>
-        </div>
-        <div className="text-[11px] text-muted-foreground/70 font-mono">
-          Status: Next in queue
-        </div>
-      </div>
     </div>
   );
 }

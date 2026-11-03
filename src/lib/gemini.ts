@@ -45,18 +45,22 @@ function isDemoOrDevAllowed(): boolean {
 }
 
 const SYSTEM_INSTRUCTION = `
-You are StockLens AI, an objective, friendly educational analyst designed for normal people and beginners.
-Your goal is to provide clear, balanced, and strictly data-grounded explanations of stocks.
+You are StockLens AI, a friendly, honest friend who knows finance explaining stocks to normal people.
+Your goal is to provide clear, calm, and strictly data-grounded explanations with zero Wall Street jargon.
 
 CRITICAL PLAIN-LANGUAGE RULES:
-1. Write for a smart 15-year-old. Use short, clear sentences.
-2. NO financial jargon without an immediate one-line explanation in everyday words (e.g. P/E means "you pay $X for every $1 the company earns in a year").
-3. NEVER provide buy, sell, or hold recommendations under any circumstance.
-4. NEVER say "good investment", "bad investment", "undervalued", or "overvalued". Instead, describe what the data shows (e.g. "historically higher than average", "moving faster than typical peers").
-5. NEVER provide future price targets, predictions, or speculative forecasts.
-6. ONLY USE THE PROVIDED NUMBERS. You must never invent, estimate, or hallucinate figures or dates.
-7. If any metric is labeled "unavailable", state clearly that it is not currently reported and do not guess.
-8. Always adhere strictly to the JSON schema output.
+1. Explain like a friendly, honest friend who knows finance.
+2. Write for a smart 15-year-old. Short sentences.
+3. NO financial jargon without an immediate one-line explanation in everyday words:
+   - P/E ratio: "You pay about $X for every $1 the company earns in a year."
+   - Market cap: "The whole company is valued at about $X."
+   - Beta: "Moves more or less than the overall market."
+4. NEVER provide buy, sell, or hold recommendations under any circumstance.
+5. NEVER say "good investment", "bad investment", "undervalued", or "overvalued". Describe differences and trade-offs, never recommend.
+6. NO future price predictions or speculative forecasts.
+7. ONLY USE THE PROVIDED NUMBERS. Never invent, extrapolate, or hallucinate figures.
+8. If any metric is labeled "unavailable", state clearly that it is not currently reported and do not guess.
+9. Always adhere strictly to the JSON schema output.
 `.trim();
 
 /**
@@ -79,7 +83,7 @@ async function callGeminiWithTimeout(
   ai: GoogleGenAI,
   model: string,
   prompt: string,
-  timeoutMs: number = 20000
+  timeoutMs: number = 10000
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -99,7 +103,7 @@ async function callGeminiWithTimeout(
     const text = response.text;
     if (!text || text.trim() === "") {
       throw new GeminiAnalysisError(
-        "The AI service returned an empty response. Please try again.",
+        "The AI service is busy, try again in a minute.",
         "MODEL_UNAVAILABLE"
       );
     }
@@ -109,8 +113,8 @@ async function callGeminiWithTimeout(
 
     if (controller.signal.aborted) {
       throw new GeminiAnalysisError(
-        "The AI analysis request timed out. Please try again.",
-        "NETWORK_ERROR"
+        "The AI service is busy, try again in a minute.",
+        "MODEL_UNAVAILABLE"
       );
     }
 
@@ -157,13 +161,18 @@ function isNotFoundError(message: string): boolean {
 }
 
 /**
- * Generates stock analysis with strict timeouts, selective retries, and optional fallback.
- * Maximum total execution is capped well under 25s for Vercel Hobby maxDuration: 30.
+ * Generates stock analysis with a shared 25-second overall deadline.
+ * - Each attempt's timeout is min(10 seconds, time remaining).
+ * - Never starts a retry or fallback with less than 5 seconds remaining.
+ * - Returns a friendly "The AI service is busy, try again in a minute." error when budget expires.
  */
 export async function generateStockAnalysis(
-  data: GroundTruthData
+  data: GroundTruthData,
+  deadlineTimestamp?: number
 ): Promise<StockAnalysisOutput> {
   const apiKey = getApiKey();
+  const deadline = deadlineTimestamp ?? (Date.now() + 25000);
+  const getRemainingMs = () => deadline - Date.now();
 
   // If no API key configured:
   if (!apiKey) {
@@ -214,18 +223,38 @@ Produce a structured JSON response matching the required schema:
   const ai = new GoogleGenAI({ apiKey });
   const activeModel = GEMINI_MODEL;
 
+  // Check remaining time before Attempt 1
+  const remaining1 = getRemainingMs();
+  if (remaining1 < 5000) {
+    throw new GeminiAnalysisError(
+      "The AI service is busy, try again in a minute.",
+      "MODEL_UNAVAILABLE"
+    );
+  }
+
+  const timeout1 = Math.min(10000, remaining1);
+
   try {
-    // Attempt 1 with primary model (20s timeout)
-    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, 20000);
+    // Attempt 1 with primary model (capped at min(10s, remaining))
+    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout1);
     const parsed1 = parseAndValidateOutput(text1);
 
     if (parsed1.success) {
       return parsed1.data;
     }
 
-    // Schema validation failed: RETRY ONCE immediately
-    console.warn("[Gemini] Output failed schema validation. Retrying once...");
-    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, 15000);
+    // Schema validation failed: RETRY ONCE if at least 5s remaining
+    const remainingRetry = getRemainingMs();
+    if (remainingRetry < 5000) {
+      throw new GeminiAnalysisError(
+        "The AI service is busy, try again in a minute.",
+        "MODEL_UNAVAILABLE"
+      );
+    }
+
+    console.warn("[Gemini] Output failed schema validation. Retrying within remaining time budget...");
+    const timeoutRetry = Math.min(10000, remainingRetry);
+    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, timeoutRetry);
     const parsedRetry = parseAndValidateOutput(textRetry);
 
     if (parsedRetry.success) {
@@ -233,11 +262,11 @@ Produce a structured JSON response matching the required schema:
     }
 
     throw new GeminiAnalysisError(
-      "The AI service returned an unreadable response format. Please try again.",
+      "The AI service is busy, try again in a minute.",
       "VALIDATION_ERROR"
     );
   } catch (err: unknown) {
-    if (err instanceof GeminiAnalysisError && (err.errorType === "NETWORK_ERROR" || err.errorType === "VALIDATION_ERROR")) {
+    if (err instanceof GeminiAnalysisError && (err.errorType === "NETWORK_ERROR" || err.errorType === "VALIDATION_ERROR" || err.errorType === "MODEL_UNAVAILABLE")) {
       throw err;
     }
 
@@ -264,13 +293,31 @@ Produce a structured JSON response matching the required schema:
       );
     }
 
-    // Handle 503 / UNAVAILABLE: at most 1 retry after 1.5s delay
+    // Handle 503 / UNAVAILABLE: at most 1 retry after 1.5s delay if time permits (>=6.5s)
     if (is503Error(rawMsg)) {
-      console.warn("[Gemini] Model reported 503/UNAVAILABLE. Waiting 1.5s before 1 retry...");
+      const remainingFor503 = getRemainingMs();
+      if (remainingFor503 < 6500) {
+        throw new GeminiAnalysisError(
+          "The AI service is busy, try again in a minute.",
+          "MODEL_UNAVAILABLE"
+        );
+      }
+
+      console.warn("[Gemini] Model reported 503/UNAVAILABLE. Waiting 1.5s before retry...");
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
+      const remaining2 = getRemainingMs();
+      if (remaining2 < 5000) {
+        throw new GeminiAnalysisError(
+          "The AI service is busy, try again in a minute.",
+          "MODEL_UNAVAILABLE"
+        );
+      }
+
+      const timeout2 = Math.min(10000, remaining2);
+
       try {
-        const text2 = await callGeminiWithTimeout(ai, activeModel, prompt, 15000);
+        const text2 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout2);
         const parsed2 = parseAndValidateOutput(text2);
         if (parsed2.success) {
           return parsed2.data;
@@ -281,10 +328,19 @@ Produce a structured JSON response matching the required schema:
 
         // Optional fallback: if 503 twice and GEMINI_FALLBACK_MODEL is configured
         if (is503Error(rawMsg2) && GEMINI_FALLBACK_MODEL.trim() !== "") {
+          const remainingFallback = getRemainingMs();
+          if (remainingFallback < 5000) {
+            throw new GeminiAnalysisError(
+              "The AI service is busy, try again in a minute.",
+              "MODEL_UNAVAILABLE"
+            );
+          }
+
+          const timeoutFallback = Math.min(10000, remainingFallback);
           const fallbackModel = GEMINI_FALLBACK_MODEL.trim();
-          console.warn(`[Gemini] Primary model 503 twice. Attempting fallback model: ${fallbackModel}...`);
+          console.warn(`[Gemini] Primary model 503 twice. Attempting fallback model (${fallbackModel})...`);
           try {
-            const textFallback = await callGeminiWithTimeout(ai, fallbackModel, prompt, 15000);
+            const textFallback = await callGeminiWithTimeout(ai, fallbackModel, prompt, timeoutFallback);
             const parsedFallback = parseAndValidateOutput(textFallback);
             if (parsedFallback.success) {
               return parsedFallback.data;
@@ -315,7 +371,7 @@ Produce a structured JSON response matching the required schema:
 
     throw new GeminiAnalysisError(
       "The AI service is busy, try again in a minute.",
-      "UNKNOWN_ERROR"
+      "MODEL_UNAVAILABLE"
     );
   }
 }

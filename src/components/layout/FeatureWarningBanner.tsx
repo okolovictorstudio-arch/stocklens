@@ -12,14 +12,25 @@ export function FeatureWarningBanner({ features }: FeatureWarningBannerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [isDismissed, setIsDismissed] = React.useState(false);
 
+  const isDev = process.env.NODE_ENV === "development";
   const missingFeatures = features.filter((f) => !f.isConfigured);
 
-  if (missingFeatures.length === 0 || isDismissed) {
+  React.useEffect(() => {
+    if (isDev && missingFeatures.length > 0) {
+      console.warn(
+        "[StockLens Dev Setup Notice]",
+        missingFeatures.map((f) => `${f.name}: missing (${f.missingVars.join(", ")})`).join("; ")
+      );
+    }
+  }, [isDev, missingFeatures]);
+
+  // Real users in production must NEVER see missing-key notices
+  if (!isDev || missingFeatures.length === 0 || isDismissed) {
     return null;
   }
 
   return (
-    <div className="border-b border-amber-500/20 bg-amber-500/10 text-amber-900 dark:text-amber-200 px-4 py-2 text-xs sm:text-sm">
+    <div className="w-full border-b border-amber-500/20 bg-amber-500/10 text-amber-900 dark:text-amber-200 px-4 py-2 text-xs sm:text-sm shrink-0">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
         <div className="flex items-center gap-2 overflow-hidden">
           <AlertCircle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />

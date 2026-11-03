@@ -113,6 +113,13 @@ export function PriceChart({
         const data = await res.json();
         if (data.candles && data.candles.length > 0) {
           setCandles(data.candles);
+          setErrorMessage(undefined);
+        } else {
+          // If no candles for this range, keep existing candles visible so chart doesn't break
+          setErrorMessage(
+            data.errorMessage ||
+              `Intraday chart (${newRange}) is not available on the free market data plan. Try 1M, 6M, 1Y, or 5Y to see the price history.`
+          );
         }
         setRateLimited(Boolean(data.isRateLimited));
         if (data.isRateLimited) {
@@ -123,7 +130,9 @@ export function PriceChart({
       }
     } catch (err) {
       console.error("Failed to fetch range candles:", err);
-      setErrorMessage("Data temporarily unavailable. Please try again shortly.");
+      setErrorMessage(
+        `Intraday chart (${newRange}) is not available on the free market data plan. Try 1M, 6M, 1Y, or 5Y to see the price history.`
+      );
     } finally {
       setIsLoading(false);
     }
@@ -135,13 +144,14 @@ export function PriceChart({
     const container = mainChartContainerRef.current;
     container.innerHTML = "";
 
+    const initialHeight = container.clientWidth < 640 ? 280 : 380;
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 380,
+      height: initialHeight,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: isDark ? "#a1a1aa" : "#71717a",
-        fontSize: 11,
+        fontSize: 12,
       },
       grid: {
         vertLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "#f4f4f5" },
@@ -289,15 +299,19 @@ export function PriceChart({
       }
     });
 
-    const handleResize = () => {
-      if (container && mainChartRef.current) {
-        mainChartRef.current.applyOptions({ width: container.clientWidth });
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        if (width > 0 && mainChartRef.current) {
+          const height = width < 640 ? 280 : 380;
+          mainChartRef.current.applyOptions({ width, height });
+        }
       }
-    };
-    window.addEventListener("resize", handleResize);
+    });
+    resizeObserver.observe(container);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       chart.remove();
       mainChartRef.current = null;
     };
@@ -371,15 +385,18 @@ export function PriceChart({
 
     rsiChart.timeScale().fitContent();
 
-    const handleResize = () => {
-      if (container && rsiChartRef.current) {
-        rsiChartRef.current.applyOptions({ width: container.clientWidth });
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        if (width > 0 && rsiChartRef.current) {
+          rsiChartRef.current.applyOptions({ width });
+        }
       }
-    };
-    window.addEventListener("resize", handleResize);
+    });
+    resizeObserver.observe(container);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       rsiChart.remove();
       rsiChartRef.current = null;
     };
@@ -440,15 +457,18 @@ export function PriceChart({
 
     macdChart.timeScale().fitContent();
 
-    const handleResize = () => {
-      if (container && macdChartRef.current) {
-        macdChartRef.current.applyOptions({ width: container.clientWidth });
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        if (width > 0 && macdChartRef.current) {
+          macdChartRef.current.applyOptions({ width });
+        }
       }
-    };
-    window.addEventListener("resize", handleResize);
+    });
+    resizeObserver.observe(container);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       macdChart.remove();
       macdChartRef.current = null;
     };
@@ -459,22 +479,35 @@ export function PriceChart({
 
   return (
     <div className="w-full rounded-2xl border border-border bg-card p-5 sm:p-6 shadow-2xs space-y-4">
-      {/* Rate limit / Unavailable notice */}
+      {/* Friendly notice when range isn't available or rate-limited */}
       {errorMessage && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-800 dark:text-amber-200">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2">
-            <AlertCircle className="size-4 shrink-0 text-amber-500" />
-            <span>{errorMessage}</span>
+            <AlertCircle className="size-4.5 shrink-0 text-amber-500" />
+            <span className="leading-snug">{errorMessage}</span>
           </div>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => handleRangeChange(activeRange)}
-            className="h-6 text-[11px] gap-1 hover:bg-amber-500/20 text-amber-900 dark:text-amber-100"
-          >
-            <RefreshCw className={`size-3 ${isLoading ? "animate-spin" : ""}`} />
-            <span>Retry</span>
-          </Button>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            {activeRange === "1D" || activeRange === "1W" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleRangeChange("1M")}
+                className="min-h-[44px] px-3 text-sm rounded-xl cursor-pointer"
+              >
+                <span>View 1M instead</span>
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleRangeChange(activeRange)}
+                className="min-h-[44px] px-3 text-sm gap-1.5 hover:bg-amber-500/20 text-amber-900 dark:text-amber-100 rounded-xl cursor-pointer"
+              >
+                <RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                <span>Retry</span>
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -488,35 +521,35 @@ export function PriceChart({
 
       {/* Controls Bar: Type toggle & Range buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
-        <div className="flex items-center gap-1.5">
-          <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-xl border border-border bg-muted/40 p-1">
             <button
               onClick={() => setChartType("candlestick")}
-              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
+              className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
                 chartType === "candlestick"
-                  ? "bg-background text-foreground shadow-2xs"
+                  ? "bg-background text-foreground shadow-2xs font-semibold"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <CandlestickChart className="size-3.5" />
+              <CandlestickChart className="size-4" />
               <span>Candles</span>
             </button>
             <button
               onClick={() => setChartType("line")}
-              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
+              className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
                 chartType === "line"
-                  ? "bg-background text-foreground shadow-2xs"
+                  ? "bg-background text-foreground shadow-2xs font-semibold"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <LineChartIcon className="size-3.5" />
+              <LineChartIcon className="size-4" />
               <span>Line</span>
             </button>
           </div>
 
           <button
             onClick={() => setShowAdvancedTools((v) => !v)}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer border ${
+            className={`inline-flex min-h-[44px] items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium transition-colors cursor-pointer border ${
               showAdvancedTools
                 ? "bg-foreground/10 border-foreground/30 text-foreground font-semibold"
                 : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -524,18 +557,18 @@ export function PriceChart({
             aria-expanded={showAdvancedTools}
             title="Toggle technical indicators (SMA, EMA, RSI, MACD, Volume)"
           >
-            <SlidersHorizontal className="size-3" />
+            <SlidersHorizontal className="size-4" />
             <span>Advanced tools</span>
             <ChevronDown
-              className={`size-3 transition-transform duration-200 ${
+              className={`size-4 transition-transform duration-200 ${
                 showAdvancedTools ? "rotate-180" : ""
               }`}
             />
           </button>
         </div>
 
-        {/* Range Buttons */}
-        <div className="flex items-center gap-1 self-start sm:self-auto">
+        {/* Range Buttons - Stay one row and scroll horizontally if needed */}
+        <div className="overflow-x-auto no-scrollbar flex items-center gap-1.5 py-1 shrink-0 w-full sm:w-auto">
           {RANGES.map((range) => {
             const isActive = activeRange === range;
             return (
@@ -543,9 +576,9 @@ export function PriceChart({
                 key={range}
                 onClick={() => handleRangeChange(range)}
                 disabled={isLoading}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium font-mono transition-colors cursor-pointer ${
+                className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold font-mono transition-colors cursor-pointer shrink-0 ${
                   isActive
-                    ? "bg-foreground text-background shadow-2xs font-semibold"
+                    ? "bg-foreground text-background shadow-2xs"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
               >
@@ -558,174 +591,174 @@ export function PriceChart({
 
       {/* Indicator Overlay & Oscillator Toggles Strip (Shown only when Advanced tools is open) */}
       {showAdvancedTools && (
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-1 animate-in fade-in slide-in-from-top-1 duration-200">
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] font-medium text-muted-foreground mr-1 flex items-center gap-1">
-              <SlidersHorizontal className="size-3 text-muted-foreground" />
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 pb-1 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-sm font-medium text-muted-foreground mr-1 flex items-center gap-1.5">
+              <SlidersHorizontal className="size-4 text-muted-foreground" />
               Overlays:
             </span>
 
             {/* SMA 20 */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowSMA20((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showSMA20
-                  ? "bg-amber-500/15 border-amber-500/50 text-amber-700 dark:text-amber-300"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              <span className="size-1.5 rounded-full bg-amber-500" />
-              SMA 20
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">20-Day Simple Moving Average</p>
-              <p className="text-muted-foreground mt-0.5">Short-term trend direction. Shows average closing price over the last 20 sessions.</p>
-            </TooltipContent>
-          </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowSMA20((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showSMA20
+                    ? "bg-amber-500/15 border-amber-500/50 text-amber-700 dark:text-amber-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span className="size-2 rounded-full bg-amber-500" />
+                SMA 20
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">20-Day Simple Moving Average</p>
+                <p className="text-muted-foreground mt-1">Short-term trend direction. Shows average closing price over the last 20 sessions.</p>
+              </TooltipContent>
+            </Tooltip>
 
-          {/* SMA 50 */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowSMA50((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showSMA50
-                  ? "bg-blue-500/15 border-blue-500/50 text-blue-700 dark:text-blue-300"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              <span className="size-1.5 rounded-full bg-blue-500" />
-              SMA 50
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">50-Day Simple Moving Average</p>
-              <p className="text-muted-foreground mt-0.5">Medium-term trend benchmark watched closely by institutional traders.</p>
-            </TooltipContent>
-          </Tooltip>
+            {/* SMA 50 */}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowSMA50((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showSMA50
+                    ? "bg-blue-500/15 border-blue-500/50 text-blue-700 dark:text-blue-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span className="size-2 rounded-full bg-blue-500" />
+                SMA 50
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">50-Day Simple Moving Average</p>
+                <p className="text-muted-foreground mt-1">Medium-term trend benchmark watched closely by institutional traders.</p>
+              </TooltipContent>
+            </Tooltip>
 
-          {/* SMA 200 */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowSMA200((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showSMA200
-                  ? "bg-purple-500/15 border-purple-500/50 text-purple-700 dark:text-purple-300"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              <span className="size-1.5 rounded-full bg-purple-500" />
-              SMA 200
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">200-Day Simple Moving Average</p>
-              <p className="text-muted-foreground mt-0.5">The primary long-term bull/bear dividing line. Price above indicates secular uptrend.</p>
-            </TooltipContent>
-          </Tooltip>
+            {/* SMA 200 */}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowSMA200((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showSMA200
+                    ? "bg-purple-500/15 border-purple-500/50 text-purple-700 dark:text-purple-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span className="size-2 rounded-full bg-purple-500" />
+                SMA 200
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">200-Day Simple Moving Average</p>
+                <p className="text-muted-foreground mt-1">The primary long-term bull/bear dividing line. Price above indicates secular uptrend.</p>
+              </TooltipContent>
+            </Tooltip>
 
-          {/* EMA 20 */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowEMA20((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showEMA20
-                  ? "bg-cyan-500/15 border-cyan-500/50 text-cyan-700 dark:text-cyan-300"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              <span className="size-1.5 rounded-full bg-cyan-500" />
-              EMA 20
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">20-Day Exponential Moving Average</p>
-              <p className="text-muted-foreground mt-0.5">Places greater weight on recent candles, reacting faster to sudden momentum shifts.</p>
-            </TooltipContent>
-          </Tooltip>
+            {/* EMA 20 */}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowEMA20((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showEMA20
+                    ? "bg-cyan-500/15 border-cyan-500/50 text-cyan-700 dark:text-cyan-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span className="size-2 rounded-full bg-cyan-500" />
+                EMA 20
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">20-Day Exponential Moving Average</p>
+                <p className="text-muted-foreground mt-1">Places greater weight on recent candles, reacting faster to sudden momentum shifts.</p>
+              </TooltipContent>
+            </Tooltip>
 
-          {/* Volume */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowVolume((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showVolume
-                  ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              Volume
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">Trading Volume</p>
-              <p className="text-muted-foreground mt-0.5">Shows number of shares bought and sold. High volume validates price breakout moves.</p>
-            </TooltipContent>
-          </Tooltip>
+            {/* Volume */}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowVolume((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showVolume
+                    ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-700 dark:text-emerald-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                Volume
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">Trading Volume</p>
+                <p className="text-muted-foreground mt-1">Shows number of shares bought and sold. High volume validates price breakout moves.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+
+          {/* Oscillators: RSI & MACD toggles */}
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-sm font-medium text-muted-foreground mr-1">Panes:</span>
+
+            {/* RSI (14) */}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowRSI((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showRSI
+                    ? "bg-violet-500/15 border-violet-500/50 text-violet-700 dark:text-violet-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                RSI (14)
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">Relative Strength Index (14)</p>
+                <p className="text-muted-foreground mt-1">Measures momentum from 0 to 100. Over 70 suggests overbought; below 30 suggests oversold.</p>
+              </TooltipContent>
+            </Tooltip>
+
+            {/* MACD */}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setShowMACD((v) => !v)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-colors cursor-pointer ${
+                  showMACD
+                    ? "bg-sky-500/15 border-sky-500/50 text-sky-700 dark:text-sky-300 font-semibold"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                MACD (12, 26, 9)
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-sm">
+                <p className="font-semibold text-foreground">Moving Average Convergence Divergence</p>
+                <p className="text-muted-foreground mt-1">Shows relationship between two EMAs. MACD crossing above signal line hints at bullish momentum.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
-
-        {/* Oscillators: RSI & MACD toggles */}
-        <div className="flex items-center gap-1.5 text-xs">
-          <span className="text-[11px] font-medium text-muted-foreground mr-1">Panes:</span>
-
-          {/* RSI (14) */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowRSI((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showRSI
-                  ? "bg-violet-500/15 border-violet-500/50 text-violet-700 dark:text-violet-300 font-semibold"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              RSI (14)
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">Relative Strength Index (14)</p>
-              <p className="text-muted-foreground mt-0.5">Measures momentum from 0 to 100. Over 70 suggests overbought; below 30 suggests oversold.</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {/* MACD */}
-          <Tooltip>
-            <TooltipTrigger
-              onClick={() => setShowMACD((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
-                showMACD
-                  ? "bg-sky-500/15 border-sky-500/50 text-sky-700 dark:text-sky-300 font-semibold"
-                  : "border-border text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              MACD (12, 26, 9)
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs">
-              <p className="font-semibold text-foreground">Moving Average Convergence Divergence</p>
-              <p className="text-muted-foreground mt-0.5">Shows relationship between two EMAs. MACD crossing above signal line hints at bullish momentum.</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
       )}
 
       {/* Floating Hover Metric Bar */}
       {inspected && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-muted-foreground bg-muted/20 px-3 py-1.5 rounded-lg border border-border/40">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-mono text-muted-foreground bg-muted/20 px-3.5 py-2 rounded-xl border border-border/40 tabular-nums">
           <div>
-            <span className="text-[10px] uppercase text-muted-foreground/80">O: </span>
-            <span className="font-semibold text-foreground tabular-nums">${inspected.open.toFixed(2)}</span>
+            <span className="text-xs uppercase text-muted-foreground/80">O: </span>
+            <span className="font-semibold text-foreground">${inspected.open.toFixed(2)}</span>
           </div>
           <div>
-            <span className="text-[10px] uppercase text-muted-foreground/80">H: </span>
-            <span className="font-semibold text-foreground tabular-nums">${inspected.high.toFixed(2)}</span>
+            <span className="text-xs uppercase text-muted-foreground/80">H: </span>
+            <span className="font-semibold text-foreground">${inspected.high.toFixed(2)}</span>
           </div>
           <div>
-            <span className="text-[10px] uppercase text-muted-foreground/80">L: </span>
-            <span className="font-semibold text-foreground tabular-nums">${inspected.low.toFixed(2)}</span>
+            <span className="text-xs uppercase text-muted-foreground/80">L: </span>
+            <span className="font-semibold text-foreground">${inspected.low.toFixed(2)}</span>
           </div>
           <div>
-            <span className="text-[10px] uppercase text-muted-foreground/80">C: </span>
-            <span className="font-semibold text-foreground tabular-nums">${inspected.close.toFixed(2)}</span>
+            <span className="text-xs uppercase text-muted-foreground/80">C: </span>
+            <span className="font-semibold text-foreground">${inspected.close.toFixed(2)}</span>
           </div>
           {inspected.volume && (
             <div className="hidden sm:block">
-              <span className="text-[10px] uppercase text-muted-foreground/80">Vol: </span>
-              <span className="text-foreground tabular-nums">{inspected.volume.toLocaleString()}</span>
+              <span className="text-xs uppercase text-muted-foreground/80">Vol: </span>
+              <span className="text-foreground">{inspected.volume.toLocaleString()}</span>
             </div>
           )}
         </div>
@@ -746,15 +779,15 @@ export function PriceChart({
 
       {/* Separate Pane: RSI (14) */}
       {showRSI && (
-        <div className="border-t border-border/60 pt-3 space-y-1">
-          <div className="flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-1.5">
+        <div className="border-t border-border/60 pt-3 space-y-1.5">
+          <div className="flex items-center justify-between text-sm font-mono">
+            <div className="flex items-center gap-2">
               <span className="font-semibold text-violet-600 dark:text-violet-400">RSI (14)</span>
-              <span className="text-muted-foreground text-[11px]">
+              <span className="text-muted-foreground text-sm">
                 Current: {rsi14Data.length > 0 ? rsi14Data[rsi14Data.length - 1].value : "--"}
               </span>
             </div>
-            <span className="text-[10px] text-muted-foreground">Overbought: 70 | Oversold: 30</span>
+            <span className="text-xs sm:text-sm text-muted-foreground">Overbought: 70 | Oversold: 30</span>
           </div>
           <div ref={rsiContainerRef} className="w-full" />
         </div>
@@ -762,16 +795,16 @@ export function PriceChart({
 
       {/* Separate Pane: MACD (12, 26, 9) */}
       {showMACD && (
-        <div className="border-t border-border/60 pt-3 space-y-1">
-          <div className="flex items-center justify-between text-xs font-mono">
+        <div className="border-t border-border/60 pt-3 space-y-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-1 text-sm font-mono">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-sky-600 dark:text-sky-400">MACD (12, 26, 9)</span>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-sm text-muted-foreground">
                 Line: {macdData.length > 0 ? macdData[macdData.length - 1].macd : "--"} | Signal:{" "}
                 {macdData.length > 0 ? macdData[macdData.length - 1].signal : "--"}
               </span>
             </div>
-            <div className="flex items-center gap-2 text-[10px]">
+            <div className="flex items-center gap-2 text-xs sm:text-sm">
               <span className="text-sky-500">■ MACD</span>
               <span className="text-amber-500">■ Signal</span>
               <span className="text-emerald-500">■ Histogram</span>

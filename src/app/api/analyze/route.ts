@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStockQuote, getStockProfile, getStockFundamentals } from "@/lib/finnhub";
-import { getHistoricalCandles } from "@/lib/twelvedata";
+import { getFiveYearDailyCandles } from "@/lib/twelvedata";
 import { calculateSMA, calculateEMA, calculateRSI, calculateMACD } from "@/lib/indicators";
 import {
   generateStockAnalysis,
@@ -26,6 +26,9 @@ if (!globalState.__stocklensInFlightAnalysis) {
 const inFlightMap = globalState.__stocklensInFlightAnalysis;
 
 export async function POST(request: NextRequest) {
+  const requestStartTime = Date.now();
+  const deadlineTimestamp = requestStartTime + 25000; // Overall 25-second deadline
+
   try {
     const body = await request.json().catch(() => ({}));
     const symbol = (body.symbol || "").trim().toUpperCase();
@@ -62,12 +65,20 @@ export async function POST(request: NextRequest) {
         cacheKey,
         CACHE_TTL.AI_ANALYSIS,
         async () => {
+          // Check remaining time before data gathering
+          if (deadlineTimestamp - Date.now() < 5000) {
+            throw new GeminiAnalysisError(
+              "The AI service is busy, try again in a minute.",
+              "MODEL_UNAVAILABLE"
+            );
+          }
+
           // Gather all verified data concurrently on the server
           const [quote, profile, fundamentals, candlesRes] = await Promise.all([
             getStockQuote(symbol),
             getStockProfile(symbol),
             getStockFundamentals(symbol),
-            getHistoricalCandles(symbol, "1M"),
+            getFiveYearDailyCandles(symbol),
           ]);
 
           if (!quote) {
@@ -140,8 +151,8 @@ export async function POST(request: NextRequest) {
             recentEarningsSurprise: latestEarnings,
           };
 
-          // Call Gemini with schema enforcement and timeouts
-          const analysis = await generateStockAnalysis(groundTruthData);
+          // Call Gemini with schema enforcement and shared 25-second deadline
+          const analysis = await generateStockAnalysis(groundTruthData, deadlineTimestamp);
 
           return {
             symbol,

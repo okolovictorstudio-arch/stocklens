@@ -57,39 +57,39 @@ function MetricCard({
   badge,
 }: MetricCardProps) {
   return (
-    <Card className="rounded-xl border-border/80 bg-card p-4 shadow-2xs hover:border-foreground/20 transition-colors">
+    <Card className="rounded-xl border-border/80 bg-card p-4 sm:p-5 shadow-2xs hover:border-foreground/20 transition-colors">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <span className="text-foreground/70">{icon}</span>
           <span>{title}</span>
         </div>
         <Tooltip>
           <TooltipTrigger
-            className="text-muted-foreground/60 hover:text-foreground p-0.5 rounded cursor-pointer transition-colors"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded-lg -mr-2 -mt-2 transition-colors"
             aria-label={`Learn about ${title}`}
           >
-            <HelpCircle className="size-3.5" />
+            <HelpCircle className="size-4" />
           </TooltipTrigger>
-          <TooltipContent className="max-w-xs text-xs">
+          <TooltipContent className="max-w-xs text-sm">
             <p className="font-semibold text-foreground">{tooltipTitle}</p>
-            <p className="text-muted-foreground mt-0.5 leading-relaxed">{tooltipExplanation}</p>
+            <p className="text-muted-foreground mt-1 leading-relaxed">{tooltipExplanation}</p>
           </TooltipContent>
         </Tooltip>
       </div>
 
-      <div className="mt-3 flex items-baseline justify-between gap-2">
+      <div className="mt-2 flex items-baseline justify-between gap-2">
         <div className="text-xl sm:text-2xl font-bold tracking-tight text-foreground font-mono tabular-nums">
           {value}
         </div>
         {badge && (
-          <Badge variant="secondary" className="text-[10px] font-mono">
+          <Badge variant="secondary" className="text-xs font-mono">
             {badge}
           </Badge>
         )}
       </div>
 
       {subtitle && (
-        <p className="mt-1 text-[11px] text-muted-foreground font-sans truncate">
+        <p className="mt-1 text-sm text-muted-foreground font-sans truncate">
           {subtitle}
         </p>
       )}
@@ -136,20 +136,20 @@ export function FundamentalsGrid({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
         <div>
           <h2 className="text-lg font-semibold tracking-tight text-foreground flex items-center gap-2">
-            <Coins className="size-4.5 text-primary" />
+            <Coins className="size-5 text-primary" />
             <span>Company Fundamentals & Valuation</span>
           </h2>
-          <p className="text-xs text-muted-foreground">
-            Core financial benchmarks fetched from verified SEC and market reports. Hover (?) for beginner explanations.
+          <p className="text-sm text-muted-foreground">
+            Core financial benchmarks explained in plain language. Tap (?) for everyday analogies.
           </p>
         </div>
-        <Badge variant="outline" className="self-start sm:self-auto text-[10px] font-mono">
+        <Badge variant="outline" className="self-start sm:self-auto text-xs font-mono">
           Free Tier Finnhub
         </Badge>
       </div>
 
       {/* Grid of Fundamental Metric Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         {/* Market Cap */}
         {fundamentals.marketCap !== null && (
           <MetricCard
@@ -157,7 +157,7 @@ export function FundamentalsGrid({
             value={formatMarketCap(fundamentals.marketCap)}
             tooltipTitle="Market Capitalization"
             tooltipExplanation={`The whole company is valued at about ${formatMarketCap(fundamentals.marketCap)}. It shows the total price tag if someone were to buy every single share.`}
-            icon={<Scale className="size-3.5" />}
+            icon={<Scale className="size-4" />}
             subtitle={`Valued at ${formatMarketCap(fundamentals.marketCap)}`}
           />
         )}
@@ -169,7 +169,7 @@ export function FundamentalsGrid({
             value={fundamentals.peRatio.toFixed(1)}
             tooltipTitle="Price-to-Earnings Ratio"
             tooltipExplanation={`You pay about $${fundamentals.peRatio.toFixed(1)} for every $1 the company earns in a year. Higher numbers mean investors expect fast growth; lower numbers mean a lower price tag relative to current earnings.`}
-            icon={<Percent className="size-3.5" />}
+            icon={<Percent className="size-4" />}
             subtitle={`$${fundamentals.peRatio.toFixed(1)} per $1 of earnings`}
           />
         )}
@@ -181,7 +181,7 @@ export function FundamentalsGrid({
             value={`$${fundamentals.eps.toFixed(2)}`}
             tooltipTitle="Earnings Per Share"
             tooltipExplanation={`Profit for each individual share of the company: the company generated $${fundamentals.eps.toFixed(2)} in profit per share over the last 12 months.`}
-            icon={<TrendingUp className="size-3.5" />}
+            icon={<TrendingUp className="size-4" />}
             subtitle="Profit per share (12 mo)"
           />
         )}
@@ -197,7 +197,7 @@ export function FundamentalsGrid({
             }
             tooltipTitle="Annual Dividend Yield"
             tooltipExplanation="Annual cash payout you receive for owning shares, as a percentage of the stock price. If 0%, the company reinvests all money back into the business."
-            icon={<Coins className="size-3.5" />}
+            icon={<Coins className="size-4" />}
             subtitle={
               fundamentals.dividendYield > 0
                 ? `${fundamentals.dividendYield.toFixed(2)}% cash payout / yr`
@@ -213,7 +213,7 @@ export function FundamentalsGrid({
             value={fundamentals.beta.toFixed(2)}
             tooltipTitle="Beta (Market Volatility)"
             tooltipExplanation={`Moves more or less than the overall stock market (1.0 moves the same). At ${fundamentals.beta.toFixed(2)}, this stock tends to swing ${fundamentals.beta > 1 ? "more" : "less"} than average.`}
-            icon={<Activity className="size-3.5" />}
+            icon={<Activity className="size-4" />}
             subtitle={
               fundamentals.beta > 1.2
                 ? "Swings more than the market"
@@ -231,29 +231,29 @@ export function FundamentalsGrid({
             value={`${fundamentals.roe.toFixed(1)}%`}
             tooltipTitle="Return on Equity (ROE)"
             tooltipExplanation={`How effectively the company turns shareholder investment into profit. For every $100 of equity, the company produced about $${fundamentals.roe.toFixed(1)} in net profits.`}
-            icon={<BarChart2 className="size-3.5" />}
+            icon={<BarChart2 className="size-4" />}
             subtitle="Profit efficiency gauge"
           />
         )}
 
         {/* 52-Week Range */}
         {fundamentals.week52High !== null && fundamentals.week52Low !== null && (
-          <Card className="col-span-2 rounded-xl border-border/80 bg-card p-4 shadow-2xs">
+          <Card className="col-span-1 sm:col-span-2 md:col-span-2 rounded-xl border-border/80 bg-card p-4 sm:p-5 shadow-2xs">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <Calendar className="size-3.5 text-foreground/70" />
+              <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                <Calendar className="size-4 text-foreground/70" />
                 <span>52-Week Range</span>
               </div>
               <Tooltip>
                 <TooltipTrigger
-                  className="text-muted-foreground/60 hover:text-foreground p-0.5 rounded cursor-pointer"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 text-muted-foreground/60 hover:text-foreground cursor-pointer rounded-lg -mr-2 -mt-2 transition-colors"
                   aria-label="Learn about 52-Week Range"
                 >
-                  <HelpCircle className="size-3.5" />
+                  <HelpCircle className="size-4" />
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs">
+                <TooltipContent className="max-w-xs text-sm">
                   <p className="font-semibold text-foreground">52-Week High & Low</p>
-                  <p className="text-muted-foreground mt-0.5">
+                  <p className="text-muted-foreground mt-1">
                     The lowest and highest prices paid over the last 365 days. The indicator bar shows where the current price stands within that yearly corridor.
                   </p>
                 </TooltipContent>
@@ -261,20 +261,20 @@ export function FundamentalsGrid({
             </div>
 
             <div className="mt-3 space-y-2">
-              <div className="flex items-baseline justify-between font-mono text-sm">
-                <span className="text-muted-foreground text-xs">
+              <div className="flex items-baseline justify-between font-mono text-sm tabular-nums">
+                <span className="text-muted-foreground text-sm">
                   Low: <strong className="text-foreground">${fundamentals.week52Low.toFixed(2)}</strong>
                 </span>
-                <span className="font-semibold text-foreground text-sm">
+                <span className="font-semibold text-foreground text-sm sm:text-base">
                   ${currentPrice.toFixed(2)} ({rangePercent}%)
                 </span>
-                <span className="text-muted-foreground text-xs">
+                <span className="text-muted-foreground text-sm">
                   High: <strong className="text-foreground">${fundamentals.week52High.toFixed(2)}</strong>
                 </span>
               </div>
 
               {/* Visual Range Track */}
-              <div className="relative h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div className="relative h-2.5 w-full rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-sky-500 transition-all duration-500"
                   style={{ width: `${rangePercent}%` }}
@@ -291,23 +291,23 @@ export function FundamentalsGrid({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
             <div>
               <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <BarChart2 className="size-4.5 text-emerald-500" />
+                <BarChart2 className="size-5 text-emerald-500" />
                 <span>Quarterly Earnings Performance (EPS Actual vs. Estimate)</span>
               </CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Compares Wall Street analyst consensus predictions against reported GAAP profits. Consistent beats signal operational strength.
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Compares Wall Street analyst predictions against reported profits. Consistent beats signal operational strength.
               </p>
             </div>
             <Tooltip>
               <TooltipTrigger
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground self-start sm:self-auto cursor-pointer"
+                className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground self-start sm:self-auto cursor-pointer p-2 rounded-lg"
               >
-                <HelpCircle className="size-3.5" />
+                <HelpCircle className="size-4" />
                 <span>How to read</span>
               </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
+              <TooltipContent className="max-w-xs text-sm">
                 <p className="font-semibold text-foreground">Earnings Surprise</p>
-                <p className="text-muted-foreground mt-0.5">
+                <p className="text-muted-foreground mt-1">
                   When the green bar (Actual) exceeds the grey bar (Estimate), the company beat expectations. This frequently triggers upward momentum.
                 </p>
               </TooltipContent>
