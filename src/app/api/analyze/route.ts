@@ -10,7 +10,7 @@ import {
 } from "@/lib/gemini";
 import { withCache, CACHE_TTL } from "@/lib/cache";
 import { checkRateLimit } from "@/lib/rate-limit";
-import type { GroundTruthData, StockAnalysisResponse } from "@/types/analysis";
+import type { GroundTruthData, StockAnalysisResponse, StockAnalysisOutput } from "@/types/analysis";
 
 export const maxDuration = 30;
 
@@ -73,13 +73,46 @@ export async function POST(request: NextRequest) {
             );
           }
 
-          // Gather all verified data concurrently on the server
+          // Gather all verified data concurrently on the server while tracking stage timings
+          const dataFetchStart = Date.now();
+          let quoteDuration = 0;
+          let profileDuration = 0;
+          let fundDuration = 0;
+          let candlesDuration = 0;
+
+          const quoteStart = Date.now();
+          const quotePromise = getStockQuote(symbol).finally(() => {
+            quoteDuration = Date.now() - quoteStart;
+          });
+
+          const profileStart = Date.now();
+          const profilePromise = getStockProfile(symbol).finally(() => {
+            profileDuration = Date.now() - profileStart;
+          });
+
+          const fundStart = Date.now();
+          const fundPromise = getStockFundamentals(symbol).finally(() => {
+            fundDuration = Date.now() - fundStart;
+          });
+
+          const candlesStart = Date.now();
+          const candlesPromise = getFiveYearDailyCandles(symbol).finally(() => {
+            candlesDuration = Date.now() - candlesStart;
+          });
+
           const [quote, profile, fundamentals, candlesRes] = await Promise.all([
-            getStockQuote(symbol),
-            getStockProfile(symbol),
-            getStockFundamentals(symbol),
-            getFiveYearDailyCandles(symbol),
+            quotePromise,
+            profilePromise,
+            fundPromise,
+            candlesPromise,
           ]);
+
+          const dataFetchDuration = Date.now() - dataFetchStart;
+          const remainingBeforeGemini = deadlineTimestamp - Date.now();
+
+          console.log(
+            `[/api/analyze] Stage timings for ${symbol}: quote=${quoteDuration}ms, fundamentals=${fundDuration}ms, 5-year candles=${candlesDuration}ms, profile=${profileDuration}ms (data fetch total: ${dataFetchDuration}ms, budget remaining before Gemini: ${remainingBeforeGemini}ms)`
+          );
 
           if (!quote) {
             throw new GeminiAnalysisError(
@@ -151,8 +184,17 @@ export async function POST(request: NextRequest) {
             recentEarningsSurprise: latestEarnings,
           };
 
-          // Call Gemini with schema enforcement and shared 25-second deadline
-          const analysis = await generateStockAnalysis(groundTruthData, deadlineTimestamp);
+          // Call Gemini with schema enforcement and shared 25-second deadline, tracking Gemini stage duration
+          const geminiStart = Date.now();
+          let analysis: StockAnalysisOutput;
+          try {
+            analysis = await generateStockAnalysis(groundTruthData, deadlineTimestamp, "/api/analyze");
+          } finally {
+            const geminiDuration = Date.now() - geminiStart;
+            console.log(
+              `[/api/analyze] Stage timing for ${symbol}: Gemini=${geminiDuration}ms (budget remaining: ${deadlineTimestamp - Date.now()}ms)`
+            );
+          }
 
           return {
             symbol,

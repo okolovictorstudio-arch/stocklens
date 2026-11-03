@@ -52,25 +52,27 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
   const [showGroundTruth, setShowGroundTruth] = React.useState(false);
   const [fetchIndex, setFetchIndex] = React.useState(0);
 
-  // Ref guard to prevent React StrictMode duplicate network calls
-  const activeRequestKeyRef = React.useRef<string | null>(null);
-
   const refetch = () => {
     setIsLoading(true);
     setErrorMsg(null);
     setErrorType(null);
-    activeRequestKeyRef.current = null;
     setFetchIndex((i) => i + 1);
   };
 
   React.useEffect(() => {
-    const requestKey = `${symbol}:${fetchIndex}`;
-    if (activeRequestKeyRef.current === requestKey) {
-      return;
-    }
-    activeRequestKeyRef.current = requestKey;
-
+    let isCancelled = false;
     const controller = new AbortController();
+
+    // Client-side hard timeout (28 seconds): guaranteed never to stay in an infinite spinner
+    const timer = setTimeout(() => {
+      if (!isCancelled) {
+        console.warn("[AIAnalysisCard] Client 28s timeout triggered");
+        setErrorMsg("The AI service is busy, try again in a minute.");
+        setErrorType("MODEL_UNAVAILABLE");
+        setIsLoading(false);
+        controller.abort();
+      }
+    }, 28000);
 
     async function execute() {
       try {
@@ -87,7 +89,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
 
         const json = await res.json();
 
-        if (controller.signal.aborted) return;
+        if (isCancelled || controller.signal.aborted) return;
 
         if (!res.ok) {
           const errData = json as ApiErrorResponse;
@@ -96,15 +98,17 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
         }
 
         setData(json);
+        setErrorMsg(null);
       } catch (err: unknown) {
-        if (controller.signal.aborted) return;
+        if (isCancelled) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
 
         console.error("[AIAnalysisCard] Fetch error:", err);
         const msg = err instanceof Error ? err.message : "The AI service is busy, try again in a minute.";
         setErrorMsg(msg);
       } finally {
-        if (!controller.signal.aborted) {
+        clearTimeout(timer);
+        if (!isCancelled) {
           setIsLoading(false);
         }
       }
@@ -113,6 +117,8 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
     execute();
 
     return () => {
+      isCancelled = true;
+      clearTimeout(timer);
       controller.abort();
     };
   }, [symbol, fetchIndex]);

@@ -143,9 +143,6 @@ export function FundamentalsGrid({
             Core financial benchmarks explained in plain language. Tap (?) for everyday analogies.
           </p>
         </div>
-        <Badge variant="outline" className="self-start sm:self-auto text-xs font-mono">
-          Free Tier Finnhub
-        </Badge>
       </div>
 
       {/* Grid of Fundamental Metric Cards */}

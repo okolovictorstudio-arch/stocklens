@@ -66,3 +66,28 @@ export interface StockAnalysisResponse {
   disclaimer: string;
   isCached?: boolean;
 }
+
+export const InvestedEarlierAISchema = z.object({
+  summary: z
+    .string()
+    .describe(
+      "2-3 short, friendly sentences summarizing what happened to the investment over time using strictly the provided numbers"
+    ),
+  lumpVsMonthlyLesson: z
+    .string()
+    .describe(
+      "Clear, plain-language comparison of the lump sum result vs the fixed monthly deposits without declaring a 'winner'"
+    ),
+  drawdownLesson: z
+    .string()
+    .describe(
+      "Everyday explanation of the biggest price drop experienced and how long it took to recover"
+    ),
+  disclaimer: z
+    .string()
+    .describe(
+      "Mandatory disclaimer: 'Past performance does not predict the future. Informational only. Not financial advice.'"
+    ),
+});
+
+export type InvestedEarlierAIResponse = z.infer<typeof InvestedEarlierAISchema>;

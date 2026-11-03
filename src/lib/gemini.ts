@@ -3,8 +3,15 @@
  * Powered by the official @google/genai SDK with structured output validation,
  * hard timeouts, selective retries, and fallback model support.
  */
-import { GoogleGenAI } from "@google/genai";
-import { StockAnalysisSchema, type StockAnalysisOutput, type GroundTruthData } from "@/types/analysis";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import {
+  StockAnalysisSchema,
+  type StockAnalysisOutput,
+  type GroundTruthData,
+  InvestedEarlierAISchema,
+  type InvestedEarlierAIResponse,
+} from "@/types/analysis";
+import type { InvestmentScenario } from "@/lib/analytics";
 
 // Primary free-tier Flash model in Google AI Studio
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
@@ -77,16 +84,85 @@ function sanitizeLog(msg: string, apiKey?: string | null): string {
 }
 
 /**
+ * Resolves the lowest thinking configuration supported by the given model.
+ * In the @google/genai SDK:
+ * - Gemini 3.x models (e.g. gemini-3.8-flash, gemini-3.5-flash-lite) do NOT accept thinkingBudget (returns HTTP 400).
+ * - They use thinkingLevel instead.
+ * - For gemini-3.8-flash, thinkingLevel="minimal" is rejected with HTTP 400, and "low" is the lowest supported level.
+ * - For gemini-3.5-flash-lite, "low" is also supported and completes in ~500ms.
+ * - Legacy Gemini 2.x models supported thinkingBudget: 0.
+ */
+function getThinkingConfig(model: string): { thinkingLevel: ThinkingLevel } | { thinkingBudget: number } {
+  if (model.includes("3.8") || model.includes("3.5") || model.includes("3.")) {
+    return { thinkingLevel: ThinkingLevel.LOW };
+  }
+  return { thinkingBudget: 0 };
+}
+
+/**
+ * Extracts normalized HTTP status code and error classification from SDK errors.
+ */
+function extractHttpStatusAndType(err: unknown): { status: number | string; type: string } {
+  const statusNum = (err as { status?: number })?.status;
+  const rawMsg = err instanceof Error ? err.message : String(err);
+
+  let detectedStatus: number | string = statusNum || "unknown";
+  let detectedType = "UNKNOWN_ERROR";
+
+  if (rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED") || detectedStatus === 429) {
+    detectedStatus = 429;
+    detectedType = "QUOTA_EXCEEDED";
+  } else if (rawMsg.includes("503") || rawMsg.includes("UNAVAILABLE") || detectedStatus === 503) {
+    detectedStatus = 503;
+    detectedType = "MODEL_UNAVAILABLE";
+  } else if (rawMsg.includes("400") || rawMsg.includes("INVALID_ARGUMENT") || detectedStatus === 400) {
+    detectedStatus = 400;
+    detectedType = "INVALID_ARGUMENT";
+  } else if (rawMsg.includes("404") || rawMsg.includes("NOT_FOUND") || detectedStatus === 404) {
+    detectedStatus = 404;
+    detectedType = "MODEL_NOT_FOUND";
+  } else if (rawMsg.includes("401") || rawMsg.includes("403")) {
+    detectedStatus = detectedStatus !== "unknown" ? detectedStatus : 403;
+    detectedType = "AUTH_ERROR";
+  } else if (rawMsg.toLowerCase().includes("fetch failed") || rawMsg.toLowerCase().includes("enotfound")) {
+    detectedStatus = "network";
+    detectedType = "NETWORK_ERROR";
+  }
+
+  return { status: detectedStatus, type: detectedType };
+}
+
+/**
+ * Logs every Gemini attempt with route name, model, attempt number, deadline budget remaining, and outcome.
+ * Never logs API keys or full prompts.
+ */
+export function logGeminiAttempt(params: {
+  route: string;
+  model: string;
+  attempt: number;
+  remainingMs: number;
+  outcome: string;
+}) {
+  console.log(
+    `[Gemini] route=${params.route} model=${params.model} attempt=${params.attempt} remaining=${params.remainingMs}ms outcome=${params.outcome}`
+  );
+}
+
+/**
  * Executes a single generation call to Gemini with a strict AbortSignal timeout.
  */
 async function callGeminiWithTimeout(
   ai: GoogleGenAI,
   model: string,
   prompt: string,
-  timeoutMs: number = 10000
+  timeoutMs: number,
+  route: string,
+  attempt: number,
+  remainingMs: number
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const thinkingConfig = getThinkingConfig(model);
 
   try {
     const response = await ai.models.generateContent({
@@ -96,27 +172,59 @@ async function callGeminiWithTimeout(
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         temperature: 0.2,
+        thinkingConfig,
         abortSignal: controller.signal,
       },
     });
 
     const text = response.text;
     if (!text || text.trim() === "") {
+      logGeminiAttempt({
+        route,
+        model,
+        attempt,
+        remainingMs,
+        outcome: "error HTTP 503 (MODEL_UNAVAILABLE: empty response text)",
+      });
       throw new GeminiAnalysisError(
         "The AI service is busy, try again in a minute.",
         "MODEL_UNAVAILABLE"
       );
     }
+
+    logGeminiAttempt({
+      route,
+      model,
+      attempt,
+      remainingMs,
+      outcome: "success",
+    });
     return text;
   } catch (err: unknown) {
     if (err instanceof GeminiAnalysisError) throw err;
 
     if (controller.signal.aborted) {
+      logGeminiAttempt({
+        route,
+        model,
+        attempt,
+        remainingMs,
+        outcome: `error TIMEOUT (exceeded ${timeoutMs}ms attempt budget)`,
+      });
       throw new GeminiAnalysisError(
         "The AI service is busy, try again in a minute.",
         "MODEL_UNAVAILABLE"
       );
     }
+
+    const { status, type } = extractHttpStatusAndType(err);
+    logGeminiAttempt({
+      route,
+      model,
+      attempt,
+      remainingMs,
+      outcome: `error HTTP ${status} (${type})`,
+    });
 
     throw err;
   } finally {
@@ -168,7 +276,8 @@ function isNotFoundError(message: string): boolean {
  */
 export async function generateStockAnalysis(
   data: GroundTruthData,
-  deadlineTimestamp?: number
+  deadlineTimestamp?: number,
+  routeName: string = "/api/analyze"
 ): Promise<StockAnalysisOutput> {
   const apiKey = getApiKey();
   const deadline = deadlineTimestamp ?? (Date.now() + 25000);
@@ -226,6 +335,13 @@ Produce a structured JSON response matching the required schema:
   // Check remaining time before Attempt 1
   const remaining1 = getRemainingMs();
   if (remaining1 < 5000) {
+    logGeminiAttempt({
+      route: routeName,
+      model: activeModel,
+      attempt: 1,
+      remainingMs: remaining1,
+      outcome: "skipped: not enough time left",
+    });
     throw new GeminiAnalysisError(
       "The AI service is busy, try again in a minute.",
       "MODEL_UNAVAILABLE"
@@ -236,7 +352,7 @@ Produce a structured JSON response matching the required schema:
 
   try {
     // Attempt 1 with primary model (capped at min(10s, remaining))
-    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout1);
+    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout1, routeName, 1, remaining1);
     const parsed1 = parseAndValidateOutput(text1);
 
     if (parsed1.success) {
@@ -246,6 +362,13 @@ Produce a structured JSON response matching the required schema:
     // Schema validation failed: RETRY ONCE if at least 5s remaining
     const remainingRetry = getRemainingMs();
     if (remainingRetry < 5000) {
+      logGeminiAttempt({
+        route: routeName,
+        model: activeModel,
+        attempt: 2,
+        remainingMs: remainingRetry,
+        outcome: "skipped: not enough time left",
+      });
       throw new GeminiAnalysisError(
         "The AI service is busy, try again in a minute.",
         "MODEL_UNAVAILABLE"
@@ -254,7 +377,7 @@ Produce a structured JSON response matching the required schema:
 
     console.warn("[Gemini] Output failed schema validation. Retrying within remaining time budget...");
     const timeoutRetry = Math.min(10000, remainingRetry);
-    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, timeoutRetry);
+    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, timeoutRetry, routeName, 2, remainingRetry);
     const parsedRetry = parseAndValidateOutput(textRetry);
 
     if (parsedRetry.success) {
@@ -297,6 +420,13 @@ Produce a structured JSON response matching the required schema:
     if (is503Error(rawMsg)) {
       const remainingFor503 = getRemainingMs();
       if (remainingFor503 < 6500) {
+        logGeminiAttempt({
+          route: routeName,
+          model: activeModel,
+          attempt: 2,
+          remainingMs: remainingFor503,
+          outcome: "skipped: not enough time left",
+        });
         throw new GeminiAnalysisError(
           "The AI service is busy, try again in a minute.",
           "MODEL_UNAVAILABLE"
@@ -308,6 +438,13 @@ Produce a structured JSON response matching the required schema:
 
       const remaining2 = getRemainingMs();
       if (remaining2 < 5000) {
+        logGeminiAttempt({
+          route: routeName,
+          model: activeModel,
+          attempt: 2,
+          remainingMs: remaining2,
+          outcome: "skipped: not enough time left",
+        });
         throw new GeminiAnalysisError(
           "The AI service is busy, try again in a minute.",
           "MODEL_UNAVAILABLE"
@@ -317,7 +454,7 @@ Produce a structured JSON response matching the required schema:
       const timeout2 = Math.min(10000, remaining2);
 
       try {
-        const text2 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout2);
+        const text2 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout2, routeName, 2, remaining2);
         const parsed2 = parseAndValidateOutput(text2);
         if (parsed2.success) {
           return parsed2.data;
@@ -329,7 +466,15 @@ Produce a structured JSON response matching the required schema:
         // Optional fallback: if 503 twice and GEMINI_FALLBACK_MODEL is configured
         if (is503Error(rawMsg2) && GEMINI_FALLBACK_MODEL.trim() !== "") {
           const remainingFallback = getRemainingMs();
+          const fallbackModel = GEMINI_FALLBACK_MODEL.trim();
           if (remainingFallback < 5000) {
+            logGeminiAttempt({
+              route: routeName,
+              model: fallbackModel,
+              attempt: 3,
+              remainingMs: remainingFallback,
+              outcome: "skipped: not enough time left",
+            });
             throw new GeminiAnalysisError(
               "The AI service is busy, try again in a minute.",
               "MODEL_UNAVAILABLE"
@@ -337,10 +482,9 @@ Produce a structured JSON response matching the required schema:
           }
 
           const timeoutFallback = Math.min(10000, remainingFallback);
-          const fallbackModel = GEMINI_FALLBACK_MODEL.trim();
           console.warn(`[Gemini] Primary model 503 twice. Attempting fallback model (${fallbackModel})...`);
           try {
-            const textFallback = await callGeminiWithTimeout(ai, fallbackModel, prompt, timeoutFallback);
+            const textFallback = await callGeminiWithTimeout(ai, fallbackModel, prompt, timeoutFallback, routeName, 3, remainingFallback);
             const parsedFallback = parseAndValidateOutput(textFallback);
             if (parsedFallback.success) {
               return parsedFallback.data;
@@ -417,5 +561,167 @@ function generateSampleAnalysis(data: GroundTruthData): StockAnalysisOutput {
         plainEnglish: `Management turned each $100 of shareholder capital into about $${data.roe} of profit.`,
       },
     ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// "What if I'd invested earlier?" AI Generator
+// ---------------------------------------------------------------------------
+
+export interface InvestedEarlierPromptData {
+  symbol: string;
+  companyName: string;
+  amount: number;
+  currentPrice: number;
+  dataHistoryYears: number;
+  scenarios: {
+    "1Y": InvestmentScenario;
+    "3Y": InvestmentScenario;
+    "5Y": InvestmentScenario;
+  };
+}
+
+export async function generateInvestedEarlierAI(
+  data: InvestedEarlierPromptData,
+  deadlineTimestamp?: number,
+  routeName: string = "/api/invested-earlier"
+): Promise<InvestedEarlierAIResponse> {
+  const apiKey = getApiKey();
+  const deadline = deadlineTimestamp ?? (Date.now() + 25000);
+  const getRemainingMs = () => deadline - Date.now();
+
+  if (!apiKey) {
+    if (isDemoOrDevAllowed()) {
+      return generateSampleInvestedEarlierAI(data);
+    }
+    throw new GeminiAnalysisError(
+      "Google Gemini API key not configured. Add GEMINI_API_KEY in .env.local to enable AI analysis.",
+      "MISSING_KEY"
+    );
+  }
+
+  const formatScenario = (sc: InvestmentScenario) => {
+    if (!sc.isAvailable) {
+      return `${sc.periodLabel}: Not available (${sc.unavailableReason || "Company began trading more recently"})`;
+    }
+    return `
+${sc.periodLabel} (Started on ${sc.startDate} at $${sc.startPrice.toFixed(2)}):
+- Lump Sum: $${sc.lumpSum.investedAmount} grew to $${sc.lumpSum.valueToday.toFixed(2)} (${sc.lumpSum.returnPct >= 0 ? "+" : ""}${sc.lumpSum.returnPct}%).
+- Monthly Deposits: $${sc.monthlyDca.monthlyDeposit}/mo across ${sc.monthlyDca.totalMonths} months ($${sc.monthlyDca.totalInvested.toFixed(2)} total invested) grew to $${sc.monthlyDca.valueToday.toFixed(2)} (${sc.monthlyDca.returnPct >= 0 ? "+" : ""}${sc.monthlyDca.returnPct}%).
+- Worst Drop: Fell ${sc.drawdown.maxDropPct}% between ${sc.drawdown.peakDate} ($${sc.drawdown.peakPrice.toFixed(2)}) and ${sc.drawdown.troughDate} ($${sc.drawdown.troughPrice.toFixed(2)}). Recovery: ${sc.drawdown.recoveryExplanation}
+    `.trim();
+  };
+
+  const prompt = `
+You are StockLens AI, explaining historical investment results for ${data.companyName} (${data.symbol}) to a normal person (smart 15-year-old).
+Write clear, short sentences. Absolutely no financial jargon without a one-line explanation.
+Strictly ground your explanation in the numbers provided below.
+
+VERIFIED CALCULATED NUMBERS:
+- Symbol: ${data.symbol} (${data.companyName})
+- Current Price: $${data.currentPrice.toFixed(2)}
+- Base Amount Tested: $${data.amount}
+- Public Trading History: about ${data.dataHistoryYears} years
+
+SCENARIO OUTCOMES:
+${formatScenario(data.scenarios["1Y"])}
+${formatScenario(data.scenarios["3Y"])}
+${formatScenario(data.scenarios["5Y"])}
+
+RULES:
+1. Explain in 2-3 friendly, honest sentences what these numbers show.
+2. Compare lump sum vs fixed monthly: explain what happened in plain terms without declaring a "winner" or "best choice". Note that lump sum captures full upside/downside from Day 1, while monthly deposits smooth out the entry price.
+3. Highlight the biggest drop and how long it took to recover.
+4. NEVER call any period the "best time to buy" or "worst time to buy". Never recommend buying, selling, or timing the market.
+5. Emphasize: "Past performance does not predict the future."
+6. Provide output in JSON matching:
+{
+  "summary": "...",
+  "lumpVsMonthlyLesson": "...",
+  "drawdownLesson": "...",
+  "disclaimer": "Past performance does not predict the future. Informational only. Not financial advice."
+}
+`.trim();
+
+  const ai = new GoogleGenAI({ apiKey });
+  const activeModel = GEMINI_MODEL;
+
+  const remaining1 = getRemainingMs();
+  if (remaining1 < 5000) {
+    logGeminiAttempt({
+      route: routeName,
+      model: activeModel,
+      attempt: 1,
+      remainingMs: remaining1,
+      outcome: "skipped: not enough time left",
+    });
+    throw new GeminiAnalysisError(
+      "The AI service is busy, try again in a minute.",
+      "MODEL_UNAVAILABLE"
+    );
+  }
+
+  const timeout1 = Math.min(10000, remaining1);
+
+  try {
+    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout1, routeName, 1, remaining1);
+    const parsed1 = parseAndValidateInvestedEarlier(text1);
+    if (parsed1.success) {
+      return parsed1.data;
+    }
+
+    // Validation retry if time permits
+    const remainingRetry = getRemainingMs();
+    if (remainingRetry < 5000) {
+      logGeminiAttempt({
+        route: routeName,
+        model: activeModel,
+        attempt: 2,
+        remainingMs: remainingRetry,
+        outcome: "skipped: not enough time left",
+      });
+      return generateSampleInvestedEarlierAI(data);
+    }
+
+    const timeoutRetry = Math.min(10000, remainingRetry);
+    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, timeoutRetry, routeName, 2, remainingRetry);
+    const parsedRetry = parseAndValidateInvestedEarlier(textRetry);
+    if (parsedRetry.success) {
+      return parsedRetry.data;
+    }
+
+    return generateSampleInvestedEarlierAI(data);
+  } catch (err: unknown) {
+    if (err instanceof GeminiAnalysisError) throw err;
+    const { type } = extractHttpStatusAndType(err);
+    throw new GeminiAnalysisError(
+      "The AI service is busy, try again in a minute.",
+      type === "QUOTA_EXCEEDED" ? "QUOTA_EXCEEDED" : "MODEL_UNAVAILABLE"
+    );
+  }
+}
+
+function parseAndValidateInvestedEarlier(text: string): { success: true; data: InvestedEarlierAIResponse } | { success: false } {
+  try {
+    const json = JSON.parse(text);
+    const result = InvestedEarlierAISchema.safeParse(json);
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+    return { success: false };
+  } catch {
+    return { success: false };
+  }
+}
+
+function generateSampleInvestedEarlierAI(data: InvestedEarlierPromptData): InvestedEarlierAIResponse {
+  const sc1 = data.scenarios["1Y"];
+  const sc5 = data.scenarios["5Y"].isAvailable ? data.scenarios["5Y"] : data.scenarios["3Y"].isAvailable ? data.scenarios["3Y"] : sc1;
+
+  return {
+    summary: `If you had put $${data.amount} into ${data.companyName} 1 year ago, it would be worth about $${sc1.lumpSum.valueToday.toFixed(2)} today (${sc1.lumpSum.returnPct >= 0 ? "+" : ""}${sc1.lumpSum.returnPct}%). Over ${sc5.years} years, that same initial $${data.amount} grew into about $${sc5.lumpSum.valueToday.toFixed(2)}.`,
+    lumpVsMonthlyLesson: `Putting in a lump sum of $${data.amount} upfront took immediate advantage of early price levels, while putting in $${data.amount} every month spread your risk across ${sc5.monthlyDca.totalMonths} separate purchases, totaling $${sc5.monthlyDca.totalInvested.toFixed(2)} invested.`,
+    drawdownLesson: `Investing is rarely a straight line up. Over the past ${sc5.years} years, the biggest drop was around ${sc5.drawdown.maxDropPct}%. ${sc5.drawdown.recoveryExplanation}`,
+    disclaimer: "Past performance does not predict the future. Informational only. Not financial advice.",
   };
 }

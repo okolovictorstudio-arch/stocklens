@@ -6,6 +6,7 @@ import { MobileTopBar } from "@/components/layout/MobileTopBar";
 import { FeatureWarningBanner } from "@/components/layout/FeatureWarningBanner";
 import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
 import { StockOverviewMessage } from "@/components/chat/StockOverviewMessage";
+import { InvestedEarlierCard } from "@/components/stock/InvestedEarlierCard";
 import { saveRecentChat } from "@/lib/recent-chats";
 import { useSidebarCollapsed } from "@/lib/sidebar-state";
 import { ArrowLeft, Sparkles, Send } from "lucide-react";
@@ -71,6 +72,21 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
 
   const handleSelectQuestion = React.useCallback(
     (questionText: string, actionType?: ChatActionType) => {
+      // Prevent duplicate cards: if question or card already exists for this stock, scroll to it
+      const existing = messages.find(
+        (m) =>
+          m.symbol === activeSymbol &&
+          (m.content === questionText || (actionType && m.actionType === actionType))
+      );
+
+      if (existing) {
+        const el = document.getElementById(`msg-${existing.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+      }
+
       const userMsg: ChatMessage = {
         id: `msg_u_${Date.now()}`,
         role: "user",
@@ -88,8 +104,8 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
         answerText = `Risk refers to how sharply a stock's price swings up and down. For ${activeCompanyName} (${activeSymbol}), check the 'Ups & downs' chip in the At-A-Glance card above. If the stock has a Beta greater than 1.2 or has experienced big percentage drops, expect bumpier price action during broader market swings.`;
       } else if (questionText === "Does it pay dividends?") {
         answerText = `Dividends are regular cash payouts that companies distribute to their shareholders. Look at the 'Pays dividends?' chip above. If it says Yes, you earn cash yield each year just for holding the stock; if it says No, the company prefers to keep and reinvest all profits into expanding its business.`;
-      } else if (questionText === "What if I'd invested $100 earlier?") {
-        answerText = `The 'What if I'd invested earlier?' calculator is arriving in Step 3! You will be able to see exactly what $100 would be worth if invested 1 month, 6 months, 1 year, or 5 years ago, calculated automatically from historical market candles.`;
+      } else if (questionText === "What if I'd invested $100 earlier?" || actionType === "invested_earlier") {
+        answerText = ""; // Rendered as full InvestedEarlierCard
       } else if (questionText === "Compare with another stock") {
         answerText = `Stock comparison is arriving in Step 4! You'll be able to pick any two companies and compare their size, valuation, dividend yield, and normalized return curves side-by-side.`;
       } else {
@@ -108,7 +124,7 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
 
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
     },
-    [activeCompanyName, activeSymbol]
+    [activeCompanyName, activeSymbol, messages]
   );
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -143,14 +159,36 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
       return;
     }
 
+    // Check if user is asking about historical investment ("What if I'd invested...")
+    const lower = trimmed.toLowerCase();
+    const isInvestedEarlierQuery =
+      Boolean(activeSymbol) &&
+      lower.includes("invest") &&
+      (lower.includes("earlier") || lower.includes("ago") || lower.includes("if i") || lower.includes("what if"));
+
+    if (isInvestedEarlierQuery) {
+      const existing = messages.find(
+        (m) => m.symbol === activeSymbol && m.actionType === "invested_earlier"
+      );
+      if (existing) {
+        const el = document.getElementById(`msg-${existing.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+      }
+    }
+
     // Otherwise, answer the query educationally
     const assistantMsg: ChatMessage = {
       id: `msg_a_${Date.now() + 1}`,
       role: "assistant",
-      content: `Regarding "${trimmed}": When analyzing ${activeCompanyName || "stocks"}, we look strictly at verified numbers like price trends, market valuation, and earnings. Feel free to explore the interactive chart and metrics above. Remember that all information is educational and not financial advice.`,
+      content: isInvestedEarlierQuery
+        ? ""
+        : `Regarding "${trimmed}": When analyzing ${activeCompanyName || "stocks"}, we look strictly at verified numbers like price trends, market valuation, and earnings. Feel free to explore the interactive chart and metrics above. Remember that all information is educational and not financial advice.`,
       symbol: activeSymbol || undefined,
       companyName: activeCompanyName,
-      actionType: "follow_up",
+      actionType: isInvestedEarlierQuery ? "invested_earlier" : "follow_up",
       timestamp: Date.now() + 1,
     };
 
@@ -230,6 +268,7 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
                 {messages.map((msg) => (
                   <div
                     key={msg.id}
+                    id={`msg-${msg.id}`}
                     className={`flex flex-col ${
                       msg.role === "user" ? "items-end" : "items-start"
                     }`}
@@ -249,12 +288,17 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
                           <span className="text-sm font-normal text-muted-foreground/70">• Informational only. Not financial advice.</span>
                         </div>
 
-                        {/* Assistant Body: Stock Overview or Plain-Language Text Answer */}
+                        {/* Assistant Body: Stock Overview, Invested Earlier, or Plain-Language Text Answer */}
                         {msg.actionType === "overview" && msg.symbol ? (
                           <StockOverviewMessage
                             symbol={msg.symbol}
                             companyName={msg.companyName || msg.symbol}
                             onSelectQuestion={handleSelectQuestion}
+                          />
+                        ) : msg.actionType === "invested_earlier" && msg.symbol ? (
+                          <InvestedEarlierCard
+                            symbol={msg.symbol}
+                            companyName={msg.companyName || msg.symbol}
                           />
                         ) : (
                           <div className="rounded-2xl border border-border bg-card p-5 sm:p-6 shadow-2xs space-y-3">
