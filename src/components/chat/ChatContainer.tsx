@@ -7,6 +7,7 @@ import { FeatureWarningBanner } from "@/components/layout/FeatureWarningBanner";
 import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
 import { StockOverviewMessage } from "@/components/chat/StockOverviewMessage";
 import { InvestedEarlierCard } from "@/components/stock/InvestedEarlierCard";
+import { StockCompareCard } from "@/components/stock/StockCompareCard";
 import { saveRecentChat } from "@/lib/recent-chats";
 import { useSidebarCollapsed } from "@/lib/sidebar-state";
 import { cleanCompanyName } from "@/lib/utils";
@@ -144,8 +145,8 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
         });
       } else if (questionText === "What if I'd invested $100 earlier?" || actionType === "invested_earlier") {
         answerText = ""; // Rendered as full InvestedEarlierCard
-      } else if (questionText === "Compare with another stock") {
-        answerText = `Stock comparison is arriving in Step 4! You'll be able to pick any two companies and compare their size, valuation, dividend yield, and normalized return curves side-by-side.`;
+      } else if (questionText === "Compare with another stock" || actionType === "compare") {
+        answerText = ""; // Rendered as full StockCompareCard
       } else {
         answerText = `Here's what the data shows for ${cleanName} (${activeSymbol}): review the At-A-Glance card and fundamentals grid above for verified numbers. Let me know if you would like me to explain any specific metric in everyday terms!`;
       }
@@ -215,6 +216,50 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
           return;
         }
       }
+    }
+
+    // Check if user is asking to compare stocks ("Compare with...", "vs ...")
+    const isCompareQuery =
+      Boolean(activeSymbol) &&
+      (lower.includes("compare") || lower.includes(" vs ") || lower.startsWith("vs "));
+
+    if (isCompareQuery) {
+      let foundCompareSym: string | undefined;
+      for (const [sym] of Object.entries(knownSymbols)) {
+        if (upperTrimmed.includes(sym) && sym !== activeSymbol) {
+          foundCompareSym = sym;
+          break;
+        }
+      }
+
+      const existing = messages.find(
+        (m) =>
+          m.symbol === activeSymbol &&
+          m.actionType === "compare" &&
+          (!foundCompareSym || m.compareSymbol === foundCompareSym)
+      );
+
+      if (existing) {
+        const el = document.getElementById(`msg-${existing.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+      }
+
+      const assistantMsg: ChatMessage = {
+        id: `msg_a_${Date.now() + 1}`,
+        role: "assistant",
+        content: "",
+        symbol: activeSymbol || undefined,
+        companyName: activeCompanyName,
+        compareSymbol: foundCompareSym,
+        actionType: "compare",
+        timestamp: Date.now() + 1,
+      };
+
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      return;
     }
 
     // Otherwise, answer the query educationally
@@ -338,6 +383,12 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
                           <InvestedEarlierCard
                             symbol={msg.symbol}
                             companyName={msg.companyName || msg.symbol}
+                          />
+                        ) : msg.actionType === "compare" && msg.symbol ? (
+                          <StockCompareCard
+                            baseSymbol={msg.symbol}
+                            baseCompanyName={msg.companyName || msg.symbol}
+                            initialTargetSymbol={msg.compareSymbol}
                           />
                         ) : (
                           <div className="rounded-2xl border border-border bg-card p-5 sm:p-6 shadow-2xs space-y-3">

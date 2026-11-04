@@ -26,6 +26,7 @@ export const CACHE_TTL = {
   PROFILE: 86400, // 24 hours
   AI_ANALYSIS: 86400, // 24 hours (AI stock analysis)
   INVESTED_EARLIER: 86400, // 24 hours (What if I'd invested earlier)
+  COMPARE: 86400, // 24 hours (Stock comparison)
 } as const;
 
 // In-Memory Adapter with globalThis retention

@@ -96,3 +96,30 @@ export const InvestedEarlierAISchema = z.object({
 });
 
 export type InvestedEarlierAIResponse = z.infer<typeof InvestedEarlierAISchema>;
+
+export const StockCompareAISchema = z.object({
+  summary: z
+    .string()
+    .describe(
+      "2-3 plain-language sentences highlighting the main profile differences between the two companies using only the provided numbers, without quoting live prices or picking a winner"
+    ),
+  tradeOffs: z
+    .array(z.string())
+    .min(2)
+    .max(4)
+    .describe(
+      "2 to 4 practical trade-offs for regular people (e.g. dividend income vs reinvested growth, volatility vs price stability)"
+    ),
+  takeaway: z
+    .string()
+    .describe(
+      "A balanced takeaway reminding the reader that different companies suit different goals. No buy/sell advice or winner verdicts."
+    ),
+  disclaimer: z
+    .string()
+    .describe(
+      "Standard disclaimer: 'Informational only. Not financial advice. Past performance does not predict the future.'"
+    ),
+});
+
+export type StockCompareAIResponse = z.infer<typeof StockCompareAISchema>;

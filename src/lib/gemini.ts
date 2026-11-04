@@ -10,8 +10,10 @@ import {
   type GroundTruthData,
   InvestedEarlierAISchema,
   type InvestedEarlierAIResponse,
+  StockCompareAISchema,
+  type StockCompareAIResponse,
 } from "@/types/analysis";
-import type { InvestmentScenario } from "@/lib/analytics";
+import type { InvestmentScenario, StockCompareMetrics } from "@/lib/analytics";
 
 // Default model hierarchy: primary fast-flash, then fallback lite, then 3.8
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
@@ -765,5 +767,173 @@ function generateSampleInvestedEarlierAI(data: InvestedEarlierPromptData): Inves
     lumpVsMonthlyLesson: `Putting in a lump sum of $${data.amount} upfront took immediate advantage of early price levels, while putting in $${data.amount} every month spread your risk across ${sc5.monthlyDca.totalMonths} separate purchases, totaling $${sc5.monthlyDca.totalInvested.toFixed(2)} invested.`,
     drawdownLesson: `Investing is rarely a straight line up. Over the past ${sc5.years} years, the biggest drop was around ${sc5.drawdown.maxDropPct}%. ${sc5.drawdown.recoveryExplanation}`,
     disclaimer: "Past performance does not predict the future. Informational only. Not financial advice.",
+  };
+}
+
+/**
+ * Generates an objective, plain-language comparison between two stocks via Gemini.
+ * Follows multi-model fallback chain, shared 25-second deadline, and strict no-jargon/no-winner rules.
+ */
+export async function generateStockComparisonAI(
+  stockA: StockCompareMetrics,
+  stockB: StockCompareMetrics,
+  deadlineTimestamp: number,
+  routeName: string = "/api/compare"
+): Promise<StockCompareAIResponse> {
+  const apiKey = getApiKey();
+
+  if (!apiKey) {
+    if (isDemoOrDevAllowed()) {
+      return generateSampleStockCompareAI(stockA, stockB);
+    }
+    throw new GeminiAnalysisError(
+      "Gemini API key is not configured.",
+      "MISSING_KEY"
+    );
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const candidates = getCandidateModels();
+
+  let hasDailyExhaustion = false;
+  let hasRateLimit = false;
+  let attemptCounter = 0;
+
+  const prompt = `
+You are a calm, objective financial educator writing for regular people (like a smart 15-year-old).
+Explain the main differences and practical trade-offs between these two companies.
+
+COMPANY A: ${stockA.companyName} (${stockA.symbol})
+- Valuation / Size: ${stockA.companySizeWords}
+- 1-Year Price Return: ${stockA.return1Y !== null ? `${stockA.return1Y}%` : "Not enough 1Y data"}
+- Cash Dividends: ${stockA.dividendLabel}
+- Volatility / Ups & Downs: ${stockA.upsAndDownsLabel}
+- Yearly Price Position: ${stockA.pricePositionLabel}
+
+COMPANY B: ${stockB.companyName} (${stockB.symbol})
+- Valuation / Size: ${stockB.companySizeWords}
+- 1-Year Price Return: ${stockB.return1Y !== null ? `${stockB.return1Y}%` : "Not enough 1Y data"}
+- Cash Dividends: ${stockB.dividendLabel}
+- Volatility / Ups & Downs: ${stockB.upsAndDownsLabel}
+- Yearly Price Position: ${stockB.pricePositionLabel}
+
+STRICT PLAIN-LANGUAGE AND COMPARISON RULES:
+1. DO NOT quote live fluctuating share prices (e.g. do not say "Trading at $240 vs $420"). Focus on relative performance, business size, dividends, and volatility.
+2. NEVER declare a "winner" or say one stock is "better" or a "buy". Describe differences, characteristics, and trade-offs neutrally.
+3. NO technical indicator names or jargon: NEVER use SMA, EMA, RSI, MACD, moving average, or histogram.
+4. Use ONLY the verified numbers provided above. Never invent extra numbers.
+5. Keep sentences short, conversational, and easy to understand.
+6. Provide 2 to 4 specific practical trade-offs for normal people (e.g. income from dividends vs growth from reinvestment, calm price stability vs bigger swings).
+7. Must include mandatory disclaimer: "Informational only. Not financial advice. Past performance does not predict the future."
+
+Respond strictly in valid JSON matching this schema:
+{
+  "summary": "2-3 plain-language sentences highlighting the main profile differences without live prices or winners",
+  "tradeOffs": ["trade-off 1", "trade-off 2", "trade-off 3"],
+  "takeaway": "balanced takeaway for normal people without advice",
+  "disclaimer": "Informational only. Not financial advice. Past performance does not predict the future."
+}
+`.trim();
+
+  for (const model of candidates) {
+    attemptCounter++;
+    const remainingMs = deadlineTimestamp - Date.now();
+
+    if (isModelExhausted(model)) {
+      logGeminiAttempt({
+        route: routeName,
+        model,
+        attempt: attemptCounter,
+        remainingMs,
+        outcome: "skipped: model currently exhausted in cache",
+      });
+      continue;
+    }
+
+    if (remainingMs < 5000) {
+      logGeminiAttempt({
+        route: routeName,
+        model,
+        attempt: attemptCounter,
+        remainingMs,
+        outcome: "skipped: not enough time left",
+      });
+      break;
+    }
+
+    const timeout = Math.min(10000, remainingMs);
+
+    try {
+      const text = await callGeminiWithTimeout(ai, model, prompt, timeout, routeName, attemptCounter, remainingMs);
+      const parsed = parseAndValidateCompare(text);
+      if (parsed.success) {
+        return parsed.data;
+      }
+    } catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const { type, isDaily, retryDelayMs } = extractHttpStatusAndType(err);
+      if (isDaily || type === "DAILY_QUOTA_EXCEEDED") {
+        hasDailyExhaustion = true;
+        markModelExhausted(model, "daily", retryDelayMs);
+      } else if (type === "RATE_LIMITED") {
+        hasRateLimit = true;
+        markModelExhausted(model, "rate", retryDelayMs);
+      } else if (type === "MODEL_UNAVAILABLE") {
+        markModelExhausted(model, "unavailable");
+      }
+
+      console.warn(
+        `[Gemini Fallback] Model ${model} failed in ${routeName} (${type}: ${sanitizeLog(rawMsg, apiKey)}). Moving to next model if available...`
+      );
+    }
+  }
+
+  if (hasDailyExhaustion) {
+    throw new GeminiAnalysisError(
+      "AI explanations have reached their daily limit and return tomorrow. Numbers, charts and the history card still work.",
+      "DAILY_QUOTA_EXCEEDED"
+    );
+  }
+
+  if (hasRateLimit) {
+    throw new GeminiAnalysisError("Try again in a few seconds", "RATE_LIMITED");
+  }
+
+  throw new GeminiAnalysisError("AI service is busy", "MODEL_UNAVAILABLE");
+}
+
+function parseAndValidateCompare(text: string): { success: true; data: StockCompareAIResponse } | { success: false } {
+  try {
+    const json = JSON.parse(text);
+    const result = StockCompareAISchema.safeParse(json);
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+    return { success: false };
+  } catch {
+    return { success: false };
+  }
+}
+
+function generateSampleStockCompareAI(
+  stockA: StockCompareMetrics,
+  stockB: StockCompareMetrics
+): StockCompareAIResponse {
+  const paysA = (stockA.dividendYield || 0) > 0;
+  const paysB = (stockB.dividendYield || 0) > 0;
+
+  const tradeOffs: string[] = [
+    `Company Size: ${stockA.companyName} is valued at ${stockA.companySizeWords}, while ${stockB.companyName} is valued at ${stockB.companySizeWords}.`,
+    paysA !== paysB
+      ? `Dividends: ${paysA ? stockA.companyName : stockB.companyName} pays cash dividends (${paysA ? stockA.dividendLabel : stockB.dividendLabel}), whereas ${paysA ? stockB.companyName : stockA.companyName} reinvests all profits back into expanding operations.`
+      : `Dividends: ${paysA ? "Both companies distribute cash dividends to shareholders." : "Neither company pays cash dividends, choosing to fund ongoing growth instead."}`,
+    `Price Swings: ${stockA.companyName}'s volatility is rated as ${stockA.upsAndDownsLabel.toLowerCase()}, compared to ${stockB.upsAndDownsLabel.toLowerCase()} for ${stockB.companyName}.`,
+  ];
+
+  return {
+    summary: `${stockA.companyName} and ${stockB.companyName} represent two distinct market profiles. ${stockA.companyName} is rated as ${stockA.upsAndDownsLabel.toLowerCase()} with a 1-year return of ${stockA.return1Y !== null ? `${stockA.return1Y}%` : "steady trend"}, while ${stockB.companyName} is rated as ${stockB.upsAndDownsLabel.toLowerCase()}.`,
+    tradeOffs,
+    takeaway: "Neither company is universally 'better'—investors seeking regular income look at dividend yield, while those prioritizing long-term growth focus on reinvestment.",
+    disclaimer: "Informational only. Not financial advice. Past performance does not predict the future.",
   };
 }

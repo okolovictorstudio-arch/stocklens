@@ -958,3 +958,298 @@ export function answerIsCompanyDoingWell(params: {
 
   return `${companyName} (${symbol}) is valued at about ${formattedCap}. ${profitText}${roeText} Review the fundamental cards above for verified financial metrics. Informational only. Not financial advice.`;
 }
+
+// ---------------------------------------------------------------------------
+// Step 4: Comparison Analytics (Pure code computation)
+// ---------------------------------------------------------------------------
+
+export interface StockCompareMetrics {
+  symbol: string;
+  companyName: string;
+  currentPrice: number;
+  change: number;
+  percentChange: number;
+  marketStatus: "open" | "closed" | "pre-market" | "after-hours";
+  return1Y: number | null; // e.g. +14.2%
+  companySizeWords: string; // e.g. "Megacap / $3.20 trillion"
+  dividendLabel: string; // e.g. "0.52% cash payout / yr" or "No cash dividend (reinvests)"
+  dividendYield: number | null;
+  upsAndDownsLabel: string; // e.g. "Calmer than average", "Moderate swings", "Bigger swings"
+  beta: number | null;
+  maxDrawdownPct: number | null;
+  pricePositionLabel: string; // e.g. "Near yearly high (84%)"
+  positionPct: number | null;
+  week52Low: number | null;
+  week52High: number | null;
+}
+
+export interface NormalizedDataPoint {
+  time: string | number; // ISO string 'YYYY-MM-DD' or timestamp
+  valueA: number; // Normalized to 100 on start date
+  valueB: number; // Normalized to 100 on start date
+  priceA?: number;
+  priceB?: number;
+}
+
+export interface NormalizedComparisonResult {
+  range: "1Y" | "3Y" | "5Y";
+  data: NormalizedDataPoint[];
+  startPriceA: number;
+  startPriceB: number;
+  currentReturnA: number;
+  currentReturnB: number;
+  startDate: string;
+  endDate: string;
+  overlappingYears: number;
+  isTruncated: boolean;
+  truncationNotice?: string;
+}
+
+export interface CompareSummaryOutput {
+  summary: string;
+  tradeOffs: string[];
+  takeaway: string;
+  disclaimer: string;
+}
+
+/**
+ * Calculates 1-year percentage return from cached daily candles.
+ */
+export function calculate1YearReturn(
+  candles: CandleDataPoint[],
+  currentPrice: number
+): number | null {
+  if (!candles || candles.length < 20) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const oneYearAgoSec = nowSec - 365 * 86400;
+
+  const startCandle = findCandleOnOrAfter(candles, oneYearAgoSec);
+  if (!startCandle || startCandle.close <= 0) return null;
+
+  const returnPct = ((currentPrice - startCandle.close) / startCandle.close) * 100;
+  return +returnPct.toFixed(1);
+}
+
+/**
+ * Formats a candle date into standard YYYY-MM-DD for date-based alignment.
+ */
+function toDateKey(time: string | number): string {
+  if (typeof time === "string" && time.length >= 10 && time.includes("-")) {
+    return time.slice(0, 10);
+  }
+  const dateObj = new Date(toUnixSec(time) * 1000);
+  return dateObj.toISOString().slice(0, 10);
+}
+
+/**
+ * Computes normalized 100-base comparison of two stock candle series over 1Y, 3Y, or 5Y.
+ * If trading histories differ, restricts to the overlapping period and flags truncation.
+ */
+export function computeNormalizedComparison(
+  candlesA: CandleDataPoint[],
+  candlesB: CandleDataPoint[],
+  range: "1Y" | "3Y" | "5Y",
+  nameA: string,
+  nameB: string
+): NormalizedComparisonResult {
+  const targetYears = range === "1Y" ? 1 : range === "3Y" ? 3 : 5;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const targetStartSec = nowSec - Math.round(targetYears * 365.25 * 86400);
+
+  if (!candlesA.length || !candlesB.length) {
+    return {
+      range,
+      data: [],
+      startPriceA: 0,
+      startPriceB: 0,
+      currentReturnA: 0,
+      currentReturnB: 0,
+      startDate: new Date(targetStartSec * 1000).toISOString().slice(0, 10),
+      endDate: new Date().toISOString().slice(0, 10),
+      overlappingYears: 0,
+      isTruncated: false,
+    };
+  }
+
+  // Earliest available candle times
+  const earliestASec = toUnixSec(candlesA[0].time);
+  const earliestBSec = toUnixSec(candlesB[0].time);
+  const earliestMutualSec = Math.max(earliestASec, earliestBSec);
+
+  // Effective start timestamp is the later of targetStartSec and mutual earliest
+  const effectiveStartSec = Math.max(targetStartSec, earliestMutualSec);
+  const isTruncated = effectiveStartSec > targetStartSec + 14 * 86400; // >2 weeks difference
+
+  // Build lookup map for Stock B by YYYY-MM-DD
+  const mapB = new Map<string, CandleDataPoint>();
+  for (const c of candlesB) {
+    mapB.set(toDateKey(c.time), c);
+  }
+
+  // Filter Stock A candles to those >= effectiveStartSec and find matching B candles
+  const aligned: Array<{
+    time: string;
+    closeA: number;
+    closeB: number;
+  }> = [];
+
+  for (const cA of candlesA) {
+    const sec = toUnixSec(cA.time);
+    if (sec < effectiveStartSec) continue;
+
+    const dateKey = toDateKey(cA.time);
+    const cB = mapB.get(dateKey);
+    if (cB) {
+      aligned.push({
+        time: dateKey,
+        closeA: cA.close,
+        closeB: cB.close,
+      });
+    }
+  }
+
+  if (aligned.length < 2) {
+    // If exact daily alignment failed due to timestamp divergence, align by relative index
+    const filteredA = candlesA.filter((c) => toUnixSec(c.time) >= effectiveStartSec);
+    const filteredB = candlesB.filter((c) => toUnixSec(c.time) >= effectiveStartSec);
+    const minLen = Math.min(filteredA.length, filteredB.length);
+
+    for (let i = 0; i < minLen; i++) {
+      aligned.push({
+        time: toDateKey(filteredA[i].time),
+        closeA: filteredA[i].close,
+        closeB: filteredB[i].close,
+      });
+    }
+  }
+
+  if (!aligned.length) {
+    return {
+      range,
+      data: [],
+      startPriceA: 0,
+      startPriceB: 0,
+      currentReturnA: 0,
+      currentReturnB: 0,
+      startDate: new Date(effectiveStartSec * 1000).toISOString().slice(0, 10),
+      endDate: new Date().toISOString().slice(0, 10),
+      overlappingYears: 0,
+      isTruncated,
+    };
+  }
+
+  const startPriceA = aligned[0].closeA;
+  const startPriceB = aligned[0].closeB;
+  const lastPriceA = aligned[aligned.length - 1].closeA;
+  const lastPriceB = aligned[aligned.length - 1].closeB;
+
+  const currentReturnA = +(((lastPriceA - startPriceA) / startPriceA) * 100).toFixed(1);
+  const currentReturnB = +(((lastPriceB - startPriceB) / startPriceB) * 100).toFixed(1);
+
+  // Normalize all points to 100 base
+  const data: NormalizedDataPoint[] = aligned.map((pt) => ({
+    time: pt.time,
+    valueA: +( (pt.closeA / startPriceA) * 100 ).toFixed(2),
+    valueB: +( (pt.closeB / startPriceB) * 100 ).toFixed(2),
+    priceA: +pt.closeA.toFixed(2),
+    priceB: +pt.closeB.toFixed(2),
+  }));
+
+  const startDate = aligned[0].time;
+  const endDate = aligned[aligned.length - 1].time;
+  const daysDiff = (new Date(endDate).getTime() - new Date(startDate).getTime()) / (86400 * 1000);
+  const overlappingYears = +(daysDiff / 365.25).toFixed(1);
+
+  let truncationNotice: string | undefined;
+  if (isTruncated) {
+    const shorterStockName = earliestASec > earliestBSec ? nameA : nameB;
+    truncationNotice = `Compared over the past ${overlappingYears} years (earliest overlapping data since ${shorterStockName} began trading).`;
+  }
+
+  return {
+    range,
+    data,
+    startPriceA,
+    startPriceB,
+    currentReturnA,
+    currentReturnB,
+    startDate,
+    endDate,
+    overlappingYears,
+    isTruncated,
+    truncationNotice,
+  };
+}
+
+/**
+ * Builds a code-computed plain-language "Quick comparison" without any Gemini calls.
+ * Focuses on trade-offs and profile differences. Never declares a winner.
+ */
+export function buildQuickComparison(
+  stockA: StockCompareMetrics,
+  stockB: StockCompareMetrics
+): CompareSummaryOutput {
+  const { companyName: nameA, symbol: symA } = stockA;
+  const { companyName: nameB, symbol: symB } = stockB;
+
+  // 1. Summary sentences
+  const sizeDiff =
+    stockA.companySizeWords !== stockB.companySizeWords
+      ? `${nameA} (${symA}) is valued as a ${stockA.companySizeWords.toLowerCase()}, while ${nameB} (${symB}) is a ${stockB.companySizeWords.toLowerCase()}.`
+      : `Both ${nameA} and ${nameB} operate as large, established companies in public markets.`;
+
+  const returnDiff =
+    stockA.return1Y !== null && stockB.return1Y !== null
+      ? ` Over the past year, ${nameA} returned ${stockA.return1Y >= 0 ? "+" : ""}${stockA.return1Y}%, while ${nameB} returned ${stockB.return1Y >= 0 ? "+" : ""}${stockB.return1Y}%.`
+      : "";
+
+  const summary = `${sizeDiff}${returnDiff} Each company presents distinct financial trade-offs depending on whether you seek cash payouts, lower volatility, or growth potential.`;
+
+  // 2. Specific trade-offs
+  const tradeOffs: string[] = [];
+
+  // Dividend trade-off
+  const paysA = (stockA.dividendYield || 0) > 0;
+  const paysB = (stockB.dividendYield || 0) > 0;
+  if (paysA && !paysB) {
+    tradeOffs.push(
+      `Cash Dividends: ${nameA} pays a cash dividend (${stockA.dividendLabel}), while ${nameB} reinvests 100% of earnings back into expanding its operations.`
+    );
+  } else if (!paysA && paysB) {
+    tradeOffs.push(
+      `Cash Dividends: ${nameB} provides regular dividend cash flow (${stockB.dividendLabel}), whereas ${nameA} focuses fully on reinvestment rather than shareholder payouts.`
+    );
+  } else if (paysA && paysB) {
+    tradeOffs.push(
+      `Dividends: Both pay cash dividends—${nameA} yields about ${stockA.dividendYield?.toFixed(2)}% compared to ${stockB.dividendYield?.toFixed(2)}% for ${nameB}.`
+    );
+  } else {
+    tradeOffs.push(
+      `Dividends: Neither company pays a cash dividend; both choose to retain and reinvest profits to fund growth.`
+    );
+  }
+
+  // Volatility trade-off
+  tradeOffs.push(
+    `Ups & Downs: ${nameA}'s price movement is rated as ${stockA.upsAndDownsLabel.toLowerCase()}, while ${nameB} is rated as ${stockB.upsAndDownsLabel.toLowerCase()}.`
+  );
+
+  // Price position trade-off
+  tradeOffs.push(
+    `Yearly Corridor: ${nameA} is ${stockA.pricePositionLabel.toLowerCase()}, while ${nameB} is ${stockB.pricePositionLabel.toLowerCase()}.`
+  );
+
+  // 3. Balanced Takeaway
+  const takeaway =
+    "Neither stock is universally 'better'—investors seeking income often favor dividend-paying assets, while those seeking capital appreciation look at reinvestment and business momentum.";
+
+  const disclaimer =
+    "Informational only. Not financial advice. Past performance does not predict the future.";
+
+  return {
+    summary,
+    tradeOffs,
+    takeaway,
+    disclaimer,
+  };
+}
