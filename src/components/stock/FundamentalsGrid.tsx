@@ -19,6 +19,7 @@ import {
 import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EarningsTrendChart } from "@/components/stock/EarningsTrendChart";
+import { formatMarketCapWords } from "@/lib/analytics";
 import type { StockFundamentals } from "@/types/stock";
 
 interface FundamentalsGridProps {
@@ -78,18 +79,18 @@ function MetricCard({
       </div>
 
       <div className="mt-2 flex items-baseline justify-between gap-2">
-        <div className="text-xl sm:text-2xl font-bold tracking-tight text-foreground font-mono tabular-nums">
+        <div className="text-xl sm:text-2xl font-bold tracking-tight text-foreground tabular-nums font-sans">
           {value}
         </div>
         {badge && (
-          <Badge variant="secondary" className="text-xs font-mono">
+          <Badge variant="secondary" className="text-xs font-sans">
             {badge}
           </Badge>
         )}
       </div>
 
       {subtitle && (
-        <p className="mt-1 text-sm text-muted-foreground font-sans truncate">
+        <p className="mt-1 text-sm text-muted-foreground font-sans">
           {subtitle}
         </p>
       )}
@@ -153,9 +154,9 @@ export function FundamentalsGrid({
             title="Market Cap"
             value={formatMarketCap(fundamentals.marketCap)}
             tooltipTitle="Market Capitalization"
-            tooltipExplanation={`The whole company is valued at about ${formatMarketCap(fundamentals.marketCap)}. It shows the total price tag if someone were to buy every single share.`}
+            tooltipExplanation={`The whole company is valued at about ${formatMarketCapWords(fundamentals.marketCap)}. It shows the total price tag if someone were to buy every single share.`}
             icon={<Scale className="size-4" />}
-            subtitle={`Valued at ${formatMarketCap(fundamentals.marketCap)}`}
+            subtitle={`The whole company is valued at about ${formatMarketCapWords(fundamentals.marketCap)}`}
           />
         )}
 
@@ -209,14 +210,12 @@ export function FundamentalsGrid({
             title="Beta"
             value={fundamentals.beta.toFixed(2)}
             tooltipTitle="Beta (Market Volatility)"
-            tooltipExplanation={`Moves more or less than the overall stock market (1.0 moves the same). At ${fundamentals.beta.toFixed(2)}, this stock tends to swing ${fundamentals.beta > 1 ? "more" : "less"} than average.`}
+            tooltipExplanation={`Tends to move a bit more (or less) than the overall market (1.0 moves the same). At ${fundamentals.beta.toFixed(2)}, this stock tends to move a bit ${fundamentals.beta > 1 ? "more" : "less"} than the overall market.`}
             icon={<Activity className="size-4" />}
             subtitle={
-              fundamentals.beta > 1.2
-                ? "Swings more than the market"
-                : fundamentals.beta < 0.8
-                ? "Calmer than the market"
-                : "Moves with the market"
+              fundamentals.beta > 1
+                ? "Tends to move a bit more than the overall market"
+                : "Tends to move a bit less than the overall market"
             }
           />
         )}
@@ -258,7 +257,7 @@ export function FundamentalsGrid({
             </div>
 
             <div className="mt-3 space-y-2">
-              <div className="flex items-baseline justify-between font-mono text-sm tabular-nums">
+              <div className="flex items-baseline justify-between font-sans text-sm tabular-nums">
                 <span className="text-muted-foreground text-sm">
                   Low: <strong className="text-foreground">${fundamentals.week52Low.toFixed(2)}</strong>
                 </span>
@@ -292,7 +291,7 @@ export function FundamentalsGrid({
                 <span>Quarterly Earnings Performance (EPS Actual vs. Estimate)</span>
               </CardTitle>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Compares Wall Street analyst predictions against reported profits. Consistent beats signal operational strength.
+                Shows whether profits came in above or below what analysts expected.
               </p>
             </div>
             <Tooltip>

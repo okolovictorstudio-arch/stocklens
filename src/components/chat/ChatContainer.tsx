@@ -9,9 +9,17 @@ import { StockOverviewMessage } from "@/components/chat/StockOverviewMessage";
 import { InvestedEarlierCard } from "@/components/stock/InvestedEarlierCard";
 import { saveRecentChat } from "@/lib/recent-chats";
 import { useSidebarCollapsed } from "@/lib/sidebar-state";
+import { cleanCompanyName } from "@/lib/utils";
+import {
+  answerPriceHighOrLow,
+  answerHowRisky,
+  answerDoesItPayDividends,
+  answerIsCompanyDoingWell,
+} from "@/lib/analytics";
 import { ArrowLeft, Sparkles, Send } from "lucide-react";
 import type { ChatMessage, ChatActionType } from "@/types/chat";
 import type { FeatureStatus } from "@/lib/env";
+import type { StockDetailsResponse } from "@/app/api/stock/route";
 
 interface ChatContainerProps {
   featureStatuses?: FeatureStatus[];
@@ -22,6 +30,7 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
   const [activeCompanyName, setActiveCompanyName] = React.useState<string>("");
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = React.useState(false);
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
+  const [stockDataMap, setStockDataMap] = React.useState<Record<string, StockDetailsResponse>>({});
   const [inputVal, setInputVal] = React.useState("");
   const [isCollapsed] = useSidebarCollapsed();
 
@@ -35,7 +44,7 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
 
   const handleSelectStock = React.useCallback((symbol: string, companyName: string) => {
     const cleanSym = symbol.trim().toUpperCase();
-    const cleanName = companyName || cleanSym;
+    const cleanName = cleanCompanyName(companyName || cleanSym);
 
     setActiveSymbol(cleanSym);
     setActiveCompanyName(cleanName);
@@ -70,6 +79,10 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
     setInputVal("");
   }, []);
 
+  const handleDataLoaded = React.useCallback((data: StockDetailsResponse) => {
+    setStockDataMap((prev) => ({ ...prev, [data.symbol]: data }));
+  }, []);
+
   const handleSelectQuestion = React.useCallback(
     (questionText: string, actionType?: ChatActionType) => {
       // Prevent duplicate cards: if question or card already exists for this stock, scroll to it
@@ -95,21 +108,46 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
         timestamp: Date.now(),
       };
 
+      const stockData = activeSymbol ? stockDataMap[activeSymbol] : null;
+      const cleanName = cleanCompanyName(activeCompanyName || activeSymbol || "the company");
+
       let answerText = "";
       if (questionText === "Is this company doing well?") {
-        answerText = `To see if a company is doing well, we check whether it produces steady profits and has a strong foundation. For ${activeCompanyName} (${activeSymbol}), its earnings (EPS) and Return on Equity (ROE) in the cards above indicate real profit generation. While past stability does not predict the future, consistent profits mean the business is actively funding its operations.`;
+        answerText = answerIsCompanyDoingWell({
+          companyName: cleanName,
+          symbol: activeSymbol || "",
+          marketCapMillions: stockData?.fundamentals?.marketCap ?? null,
+          eps: stockData?.fundamentals?.eps ?? null,
+          roe: stockData?.fundamentals?.roe ?? null,
+        });
       } else if (questionText === "Is the price high or low right now?") {
-        answerText = `We look at where the current price sits within its 52-week trading range and its P/E multiple. In the At-A-Glance card above, check the 'Yearly price range' bar. If the price is near the top third, investors are currently paying higher multiples relative to the past 12 months.`;
+        answerText = answerPriceHighOrLow({
+          companyName: cleanName,
+          symbol: activeSymbol || "",
+          currentPrice: stockData?.quote?.currentPrice ?? 0,
+          low52: stockData?.fundamentals?.week52Low ?? null,
+          high52: stockData?.fundamentals?.week52High ?? null,
+          peRatio: stockData?.fundamentals?.peRatio ?? null,
+        });
       } else if (questionText === "How risky is it?") {
-        answerText = `Risk refers to how sharply a stock's price swings up and down. For ${activeCompanyName} (${activeSymbol}), check the 'Ups & downs' chip in the At-A-Glance card above. If the stock has a Beta greater than 1.2 or has experienced big percentage drops, expect bumpier price action during broader market swings.`;
+        answerText = answerHowRisky({
+          companyName: cleanName,
+          symbol: activeSymbol || "",
+          beta: stockData?.fundamentals?.beta ?? null,
+          candles: stockData?.candles ?? [],
+        });
       } else if (questionText === "Does it pay dividends?") {
-        answerText = `Dividends are regular cash payouts that companies distribute to their shareholders. Look at the 'Pays dividends?' chip above. If it says Yes, you earn cash yield each year just for holding the stock; if it says No, the company prefers to keep and reinvest all profits into expanding its business.`;
+        answerText = answerDoesItPayDividends({
+          companyName: cleanName,
+          symbol: activeSymbol || "",
+          dividendYield: stockData?.fundamentals?.dividendYield ?? null,
+        });
       } else if (questionText === "What if I'd invested $100 earlier?" || actionType === "invested_earlier") {
         answerText = ""; // Rendered as full InvestedEarlierCard
       } else if (questionText === "Compare with another stock") {
         answerText = `Stock comparison is arriving in Step 4! You'll be able to pick any two companies and compare their size, valuation, dividend yield, and normalized return curves side-by-side.`;
       } else {
-        answerText = `Here's what the data shows for ${activeCompanyName} (${activeSymbol}): review the At-A-Glance card and fundamentals grid above for verified numbers. Let me know if you would like me to explain any specific metric in everyday terms!`;
+        answerText = `Here's what the data shows for ${cleanName} (${activeSymbol}): review the At-A-Glance card and fundamentals grid above for verified numbers. Let me know if you would like me to explain any specific metric in everyday terms!`;
       }
 
       const assistantMsg: ChatMessage = {
@@ -117,14 +155,14 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
         role: "assistant",
         content: answerText,
         symbol: activeSymbol || undefined,
-        companyName: activeCompanyName,
+        companyName: cleanName,
         actionType: actionType || "follow_up",
         timestamp: Date.now() + 1,
       };
 
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
     },
-    [activeCompanyName, activeSymbol, messages]
+    [activeCompanyName, activeSymbol, messages, stockDataMap]
   );
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -294,6 +332,7 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
                             symbol={msg.symbol}
                             companyName={msg.companyName || msg.symbol}
                             onSelectQuestion={handleSelectQuestion}
+                            onDataLoaded={handleDataLoaded}
                           />
                         ) : msg.actionType === "invested_earlier" && msg.symbol ? (
                           <InvestedEarlierCard

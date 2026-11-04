@@ -5,11 +5,12 @@ import { calculateSMA, calculateEMA, calculateRSI, calculateMACD } from "@/lib/i
 import {
   generateStockAnalysis,
   GeminiAnalysisError,
-  GEMINI_MODEL,
   DISCLAIMER_TEXT,
 } from "@/lib/gemini";
 import { withCache, CACHE_TTL } from "@/lib/cache";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { cleanCompanyName } from "@/lib/utils";
+import { computePlainPriceTrend, buildQuickSummary } from "@/lib/analytics";
 import type { GroundTruthData, StockAnalysisResponse, StockAnalysisOutput } from "@/types/analysis";
 
 export const maxDuration = 30;
@@ -122,8 +123,12 @@ export async function POST(request: NextRequest) {
           }
 
           const candles = candlesRes.candles || [];
+          const cleanName = cleanCompanyName(profile?.name || symbol);
 
-          // Calculate technical indicators from the real candles
+          // Calculate plain-language trend descriptions from the real candles
+          const plainTrend = computePlainPriceTrend(candles);
+
+          // Calculate technical indicators from the real candles for advanced view / drawer
           const sma20 = calculateSMA(candles, 20);
           const sma50 = calculateSMA(candles, 50);
           const sma200 = calculateSMA(candles, 200);
@@ -161,13 +166,16 @@ export async function POST(request: NextRequest) {
               ? `${fundamentals.earningsTrend[fundamentals.earningsTrend.length - 1].period}: Actual $${fundamentals.earningsTrend[fundamentals.earningsTrend.length - 1].actual} vs Est $${fundamentals.earningsTrend[fundamentals.earningsTrend.length - 1].estimate}`
               : "unavailable";
 
-          // Assemble verified Ground Truth Data - ONLY these numbers reach the model
+          // Assemble verified Ground Truth Data
           const groundTruthData: GroundTruthData = {
             symbol,
-            companyName: profile?.name || symbol,
+            companyName: cleanName,
             currentPrice: `$${quote.currentPrice.toFixed(2)}`,
             dailyChange: `${quote.change >= 0 ? "+" : ""}${quote.change.toFixed(2)} (${quote.percentChange >= 0 ? "+" : ""}${quote.percentChange.toFixed(2)}%)`,
             marketStatus: quote.marketStatus,
+            recentTrendLabel: plainTrend.recent1MonthTrend,
+            longTermTrendLabel: plainTrend.longTermTrend,
+            momentumLabel: plainTrend.momentumDescription,
             sma20: lastVal(sma20),
             sma50: lastVal(sma50),
             sma200: lastVal(sma200),
@@ -184,15 +192,49 @@ export async function POST(request: NextRequest) {
             recentEarningsSurprise: latestEarnings,
           };
 
-          // Call Gemini with schema enforcement and shared 25-second deadline, tracking Gemini stage duration
+          // Call Gemini with schema enforcement and shared 25-second deadline
           const geminiStart = Date.now();
           let analysis: StockAnalysisOutput;
+          let isQuickSummary = false;
+          let aiError: string | undefined = undefined;
+          let aiErrorType: string | undefined = undefined;
+
           try {
             analysis = await generateStockAnalysis(groundTruthData, deadlineTimestamp, "/api/analyze");
+          } catch (geminiErr: unknown) {
+            const geminiDuration = Date.now() - geminiStart;
+            console.warn(
+              `[/api/analyze] Gemini unavailable after ${geminiDuration}ms, generating verified Quick Summary in code:`,
+              geminiErr instanceof Error ? geminiErr.message : String(geminiErr)
+            );
+
+            // Fallback immediately to code-computed Quick Summary
+            analysis = buildQuickSummary({
+              symbol,
+              companyName: cleanName,
+              currentPrice: quote.currentPrice,
+              marketCapMillions: fundamentals.marketCap,
+              peRatio: fundamentals.peRatio,
+              eps: fundamentals.eps,
+              dividendYield: fundamentals.dividendYield,
+              beta: fundamentals.beta,
+              week52Low: fundamentals.week52Low,
+              week52High: fundamentals.week52High,
+              candles,
+            });
+            isQuickSummary = true;
+
+            if (geminiErr instanceof GeminiAnalysisError) {
+              aiError = geminiErr.message;
+              aiErrorType = geminiErr.errorType;
+            } else {
+              aiError = "Something went wrong on our side.";
+              aiErrorType = "UNKNOWN_ERROR";
+            }
           } finally {
             const geminiDuration = Date.now() - geminiStart;
             console.log(
-              `[/api/analyze] Stage timing for ${symbol}: Gemini=${geminiDuration}ms (budget remaining: ${deadlineTimestamp - Date.now()}ms)`
+              `[/api/analyze] Stage timing for ${symbol}: Gemini/Synthesis=${geminiDuration}ms (budget remaining: ${deadlineTimestamp - Date.now()}ms)`
             );
           }
 
@@ -201,9 +243,11 @@ export async function POST(request: NextRequest) {
             companyName: groundTruthData.companyName,
             analysis,
             groundTruthData,
-            modelUsed: GEMINI_MODEL,
             generatedAt: new Date().toISOString(),
             disclaimer: DISCLAIMER_TEXT,
+            isQuickSummary,
+            error: aiError,
+            errorType: aiErrorType,
           };
         }
       );
@@ -222,7 +266,7 @@ export async function POST(request: NextRequest) {
       const statusCode =
         err.errorType === "MISSING_KEY"
           ? 400
-          : err.errorType === "QUOTA_EXCEEDED"
+          : err.errorType === "DAILY_QUOTA_EXCEEDED" || err.errorType === "RATE_LIMITED"
           ? 429
           : err.errorType === "MODEL_UNAVAILABLE"
           ? 503
@@ -232,7 +276,7 @@ export async function POST(request: NextRequest) {
         {
           error: err.message,
           errorType: err.errorType,
-          isRateLimited: err.errorType === "QUOTA_EXCEEDED",
+          isRateLimited: err.errorType === "DAILY_QUOTA_EXCEEDED" || err.errorType === "RATE_LIMITED",
         },
         { status: statusCode }
       );
@@ -243,7 +287,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        error: "The AI service is busy, try again in a minute.",
+        error: "Something went wrong on our side.",
         errorType: "UNKNOWN_ERROR",
         isRateLimited: false,
       },

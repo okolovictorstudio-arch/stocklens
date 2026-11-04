@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Search, Loader2, Sparkles, AlertCircle, X } from "lucide-react";
+import { cleanCompanyName } from "@/lib/utils";
 import type { SearchResultItem } from "@/types/stock";
 
 interface ChatEmptyStateProps {
@@ -74,7 +75,7 @@ export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
   const handleSelect = (symbol: string, companyName: string) => {
     setIsOpen(false);
     setQuery("");
-    onSelectStock(symbol.toUpperCase(), companyName);
+    onSelectStock(symbol.toUpperCase(), cleanCompanyName(companyName || symbol));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -96,7 +97,7 @@ export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
       e.preventDefault();
       if (selectedIndex >= 0 && selectedIndex < results.length) {
         const item = results[selectedIndex];
-        handleSelect(item.symbol, item.description || item.symbol);
+        handleSelect(item.symbol, cleanCompanyName(item.description || item.symbol));
       } else if (query.trim()) {
         handleSelect(query.trim(), query.trim());
       }
@@ -196,7 +197,7 @@ export function ChatEmptyState({ onSelectStock }: ChatEmptyStateProps) {
                         <div className="overflow-hidden">
                           {/* Company Name First */}
                           <div className="font-semibold text-foreground text-base truncate">
-                            {item.description || item.symbol}
+                            {cleanCompanyName(item.description || item.symbol)}
                           </div>
                           {/* Ticker Second */}
                           <div className="text-sm text-muted-foreground flex items-center gap-2 font-mono">

@@ -7,25 +7,25 @@ export const KeyMetricExplanationSchema = z.object({
 });
 
 export const StockAnalysisSchema = z.object({
-  summary: z.string().describe("2-3 balanced, educational sentences summarizing the stock's current financial and technical state using strictly the provided numbers"),
+  summary: z.string().describe("2-3 balanced, educational sentences summarizing the stock's current financial and business state using strictly the provided numbers"),
   strengths: z
     .array(z.string())
     .min(2)
     .max(5)
-    .describe("2 to 4 positive fundamental or technical observations grounded in the provided data"),
+    .describe("2 to 4 positive fundamental observations grounded in the provided data. Do not repeat P/E, Market Cap, or Beta if explained in Key Metrics."),
   risks: z
     .array(z.string())
     .min(2)
     .max(5)
-    .describe("2 to 4 cautionary factors or potential risks visible in the numbers"),
+    .describe("2 to 4 cautionary factors or potential risks visible in the numbers. Reword beta as 'tends to move a bit more (or less) than the overall market'."),
   technical_outlook: z
     .string()
-    .describe("Objective overview of what moving averages, RSI, and MACD reflect about momentum and trend (without forecasting future prices)"),
+    .describe("Everyday description of price trend in plain words. NEVER mention SMA, EMA, RSI, MACD, moving average, or histogram."),
   key_metrics_explained: z
     .array(KeyMetricExplanationSchema)
     .min(2)
     .max(6)
-    .describe("Plain-English breakdown of key reported numbers for beginners"),
+    .describe("Plain-English breakdown of key reported numbers for beginners. Explain each fact once."),
 });
 
 export type KeyMetricExplanation = z.infer<typeof KeyMetricExplanationSchema>;
@@ -37,6 +37,9 @@ export interface GroundTruthData {
   currentPrice: string;
   dailyChange: string;
   marketStatus: string;
+  recentTrendLabel?: string;
+  longTermTrendLabel?: string;
+  momentumLabel?: string;
   sma20: string;
   sma50: string;
   sma200: string;
@@ -65,6 +68,8 @@ export interface StockAnalysisResponse {
   generatedAt: string;
   disclaimer: string;
   isCached?: boolean;
+  isQuickSummary?: boolean;
+  errorType?: string;
 }
 
 export const InvestedEarlierAISchema = z.object({

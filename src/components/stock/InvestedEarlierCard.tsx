@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { InvestedEarlierAnalysis, InvestmentScenario } from "@/lib/analytics";
 import type { InvestedEarlierAIResponse } from "@/types/analysis";
+import { cleanCompanyName } from "@/lib/utils";
 
 interface InvestedEarlierCardProps {
   symbol: string;
@@ -40,6 +41,7 @@ export function InvestedEarlierCard({
   companyName,
   initialAmount = 100,
 }: InvestedEarlierCardProps) {
+  const displayCompanyName = cleanCompanyName(companyName || symbol);
   const [amount, setAmount] = React.useState<number>(initialAmount);
   const [inputVal, setInputVal] = React.useState<string>(String(initialAmount));
   const [selectedPeriod, setSelectedPeriod] = React.useState<"1Y" | "3Y" | "5Y">("1Y");
@@ -233,7 +235,7 @@ export function InvestedEarlierCard({
           <span>Historical Investment Explorer</span>
         </div>
         <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-          What if you had invested in {companyName} earlier?
+          What if you had invested in {displayCompanyName} earlier?
         </h2>
         <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
           See what an investment would be worth today based on real historical daily prices.
@@ -377,17 +379,17 @@ export function InvestedEarlierCard({
                     {activeScenario.startPrice.toFixed(2)} per share.
                   </div>
                 )}
-                <div className="text-2xl font-bold font-mono tracking-tight text-foreground tabular-nums">
+                <div className="text-2xl font-bold font-sans tracking-tight text-foreground tabular-nums">
                   {fmt(activeScenario.lumpSum.valueToday)}
                 </div>
                 <div className="flex items-center gap-1.5 text-sm font-semibold">
                   {activeScenario.lumpSum.returnPct >= 0 ? (
-                    <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
+                    <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-sans tabular-nums">
                       <ArrowUpRight className="size-4 shrink-0" />
                       +{activeScenario.lumpSum.returnPct}% ({fmt(activeScenario.lumpSum.totalProfit)})
                     </span>
                   ) : (
-                    <span className="flex items-center text-rose-600 dark:text-rose-400 font-mono tabular-nums">
+                    <span className="flex items-center text-rose-600 dark:text-rose-400 font-sans tabular-nums">
                       <ArrowDownRight className="size-4 shrink-0" />
                       {activeScenario.lumpSum.returnPct}% ({fmt(activeScenario.lumpSum.totalProfit)})
                     </span>
@@ -396,8 +398,8 @@ export function InvestedEarlierCard({
               </div>
 
               <div className="text-xs text-muted-foreground border-t border-border/60 pt-2 font-sans space-y-0.5">
-                <div>Invested: <span className="font-mono text-foreground">{fmt(amount)}</span></div>
-                <div>Shares bought: <span className="font-mono text-foreground">{activeScenario.lumpSum.sharesBought}</span></div>
+                <div>Invested: <span className="font-sans tabular-nums text-foreground">{fmt(amount)}</span></div>
+                <div>Shares bought: <span className="font-sans tabular-nums text-foreground">{activeScenario.lumpSum.sharesBought}</span></div>
               </div>
             </div>
 
@@ -423,17 +425,17 @@ export function InvestedEarlierCard({
                     This averages out your purchase price during highs and lows.
                   </div>
                 )}
-                <div className="text-2xl font-bold font-mono tracking-tight text-foreground tabular-nums">
+                <div className="text-2xl font-bold font-sans tracking-tight text-foreground tabular-nums">
                   {fmt(activeScenario.monthlyDca.valueToday)}
                 </div>
                 <div className="flex items-center gap-1.5 text-sm font-semibold">
                   {activeScenario.monthlyDca.returnPct >= 0 ? (
-                    <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
+                    <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-sans tabular-nums">
                       <ArrowUpRight className="size-4 shrink-0" />
                       +{activeScenario.monthlyDca.returnPct}% ({fmt(activeScenario.monthlyDca.totalProfit)})
                     </span>
                   ) : (
-                    <span className="flex items-center text-rose-600 dark:text-rose-400 font-mono tabular-nums">
+                    <span className="flex items-center text-rose-600 dark:text-rose-400 font-sans tabular-nums">
                       <ArrowDownRight className="size-4 shrink-0" />
                       {activeScenario.monthlyDca.returnPct}% ({fmt(activeScenario.monthlyDca.totalProfit)})
                     </span>
@@ -442,8 +444,8 @@ export function InvestedEarlierCard({
               </div>
 
               <div className="text-xs text-muted-foreground border-t border-border/60 pt-2 font-sans space-y-0.5">
-                <div>Total deposited: <span className="font-mono text-foreground">{fmt(activeScenario.monthlyDca.totalInvested)}</span></div>
-                <div>Contributions: <span className="font-mono text-foreground">{activeScenario.monthlyDca.totalMonths} months</span></div>
+                <div>Total deposited: <span className="font-sans tabular-nums text-foreground">{fmt(activeScenario.monthlyDca.totalInvested)}</span></div>
+                <div>Contributions: <span className="font-sans tabular-nums text-foreground">{activeScenario.monthlyDca.totalMonths} months</span></div>
               </div>
             </div>
           </div>
@@ -462,14 +464,14 @@ export function InvestedEarlierCard({
                   Biggest Drop Over This Time:
                 </span>
               </div>
-              <span className="font-mono font-bold text-sm text-rose-600 dark:text-rose-400 tabular-nums">
+              <span className="font-sans font-bold text-sm text-rose-600 dark:text-rose-400 tabular-nums">
                 -{activeScenario.drawdown.maxDropPct}%
               </span>
             </div>
 
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Fell from <span className="font-mono text-foreground">${activeScenario.drawdown.peakPrice.toFixed(2)}</span> down to{" "}
-              <span className="font-mono text-foreground">${activeScenario.drawdown.troughPrice.toFixed(2)}</span>.{" "}
+              Fell from <span className="font-sans tabular-nums font-semibold text-foreground">${activeScenario.drawdown.peakPrice.toFixed(2)}</span> down to{" "}
+              <span className="font-sans tabular-nums font-semibold text-foreground">${activeScenario.drawdown.troughPrice.toFixed(2)}</span>.{" "}
               <span className="text-foreground font-medium">{activeScenario.drawdown.recoveryExplanation}</span>
             </p>
           </div>

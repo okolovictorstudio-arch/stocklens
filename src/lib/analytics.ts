@@ -650,3 +650,311 @@ export function calculateInvestedEarlier(
     },
   };
 }
+
+/**
+ * Formats market capitalization into plain English words (e.g. "$4.92 trillion").
+ */
+export function formatMarketCapWords(capMillions: number | null): string {
+  if (capMillions === null || isNaN(capMillions) || capMillions <= 0) return "unavailable";
+  if (capMillions >= 1000000) {
+    return `$${(capMillions / 1000000).toFixed(2)} trillion`;
+  }
+  if (capMillions >= 1000) {
+    return `$${(capMillions / 1000).toFixed(2)} billion`;
+  }
+  return `$${capMillions.toFixed(2)} million`;
+}
+
+/**
+ * Computes plain-language price trend descriptions from candle history.
+ * Strictly avoids any technical indicator names (no SMA, EMA, RSI, MACD, "moving average", "histogram").
+ */
+export function computePlainPriceTrend(candles: CandleDataPoint[]): {
+  recent1MonthTrend: string;
+  longTermTrend: string;
+  momentumDescription: string;
+  plainSummary: string;
+} {
+  if (!candles || candles.length < 5) {
+    return {
+      recent1MonthTrend: "recent price movement is steady",
+      longTermTrend: "trading within its normal range",
+      momentumDescription: "momentum is balanced",
+      plainSummary: "Over recent weeks the price has moved with normal market fluctuations.",
+    };
+  }
+
+  const latest = candles[candles.length - 1].close;
+
+  // 1-month trend (approx 20 trading days)
+  const lookback20Index = Math.max(0, candles.length - 21);
+  const price20DaysAgo = candles[lookback20Index].close;
+  const monthChangePct = price20DaysAgo > 0 ? ((latest - price20DaysAgo) / price20DaysAgo) * 100 : 0;
+
+  let recent1MonthTrend = "over the past month the price has mostly moved sideways";
+  if (monthChangePct > 10) {
+    recent1MonthTrend = "over the past month the price has surged strongly";
+  } else if (monthChangePct > 3) {
+    recent1MonthTrend = "over the past month the price has risen steadily";
+  } else if (monthChangePct < -10) {
+    recent1MonthTrend = "over the past month the price has fallen sharply";
+  } else if (monthChangePct < -3) {
+    recent1MonthTrend = "over the past month the price has drifted down somewhat";
+  }
+
+  // Long-term baseline (approx 100 to 200 trading days)
+  const longCount = Math.min(candles.length, 150);
+  const slice = candles.slice(candles.length - longCount);
+  const avg = slice.reduce((acc, c) => acc + c.close, 0) / slice.length;
+  const diffFromAvgPct = avg > 0 ? ((latest - avg) / avg) * 100 : 0;
+
+  let longTermTrend = "trading right around its average over recent months";
+  if (diffFromAvgPct > 5) {
+    longTermTrend = "trading higher than its average over recent months";
+  } else if (diffFromAvgPct < -5) {
+    longTermTrend = "trading lower than its average over recent months";
+  }
+
+  // Short-term momentum: look at the last 5 days
+  const lookback5Index = Math.max(0, candles.length - 6);
+  const price5DaysAgo = candles[lookback5Index].close;
+  const weekChangePct = price5DaysAgo > 0 ? ((latest - price5DaysAgo) / price5DaysAgo) * 100 : 0;
+
+  let momentumDescription = "balanced without extreme swings";
+  if (weekChangePct > 6) {
+    momentumDescription = "showing strong buying interest recently";
+  } else if (weekChangePct < -6) {
+    momentumDescription = "experiencing short-term selling pressure";
+  }
+
+  const plainSummary = `${recent1MonthTrend.charAt(0).toUpperCase() + recent1MonthTrend.slice(1)}, and is currently ${longTermTrend}. Price action has been ${momentumDescription}.`;
+
+  return {
+    recent1MonthTrend,
+    longTermTrend,
+    momentumDescription,
+    plainSummary,
+  };
+}
+
+/**
+ * Builds a 100% code-computed plain-language summary when AI is at daily quota or unavailable.
+ * Completely free of Wall Street jargon, strictly grounded in verified numbers.
+ */
+export function buildQuickSummary(params: {
+  symbol: string;
+  companyName: string;
+  currentPrice: number;
+  marketCapMillions: number | null;
+  peRatio: number | null;
+  eps: number | null;
+  dividendYield: number | null;
+  beta: number | null;
+  week52Low: number | null;
+  week52High: number | null;
+  candles: CandleDataPoint[];
+}) {
+  const {
+    symbol,
+    companyName,
+    currentPrice,
+    marketCapMillions,
+    peRatio,
+    eps,
+    dividendYield,
+    beta,
+    week52Low,
+    week52High,
+    candles,
+  } = params;
+
+  const formattedCap = formatMarketCapWords(marketCapMillions);
+  const peStr = peRatio !== null && peRatio > 0 ? peRatio.toFixed(1) : null;
+  const trend = computePlainPriceTrend(candles);
+
+  const summary = `${companyName} (${symbol}) is currently priced at $${currentPrice.toFixed(2)}. The whole company is valued at about ${formattedCap}${
+    peStr ? ` and trades at about $${peStr} for every $1 the company earns in a year` : ""
+  }. ${trend.plainSummary}`;
+
+  const strengths: string[] = [];
+  if (marketCapMillions && marketCapMillions >= 10000) {
+    strengths.push(
+      `The whole company is valued at about ${formattedCap}, providing strong financial stability and scale.`
+    );
+  }
+  if (eps !== null && eps > 0) {
+    strengths.push(
+      `Consistently profitable, producing about $${eps.toFixed(2)} in profit per share over the last 12 months.`
+    );
+  }
+  if (dividendYield !== null && dividendYield > 0) {
+    strengths.push(
+      `Pays an annual cash dividend yield of about ${dividendYield.toFixed(2)}%, returning regular cash to shareholders.`
+    );
+  } else {
+    strengths.push(
+      `Reinvests all profits back into research, hiring, and business expansion rather than paying cash out.`
+    );
+  }
+
+  const risks: string[] = [];
+  if (beta !== null) {
+    const betaDesc =
+      beta > 1.2
+        ? "tends to move a bit more than the overall market during market swings"
+        : beta < 0.85
+        ? "tends to move a bit less than the overall market during market swings"
+        : "tends to move closely alongside the overall market";
+    risks.push(`With a Beta of ${beta.toFixed(2)}, the stock ${betaDesc}.`);
+  }
+  if (week52Low !== null && week52High !== null) {
+    risks.push(
+      `Has traded between $${week52Low.toFixed(2)} and $${week52High.toFixed(2)} over the past year, reflecting market price swings.`
+    );
+  }
+  risks.push(
+    `Changes in consumer demand, competition, or economic shifts can impact future revenue and profit margins.`
+  );
+
+  const key_metrics_explained = [];
+  if (peStr) {
+    key_metrics_explained.push({
+      metric: "P/E Ratio",
+      value: peStr,
+      plainEnglish: `You pay about $${peStr} for every $1 the company earns in a year.`,
+    });
+  }
+  key_metrics_explained.push({
+    metric: "Market Valuation",
+    value: formattedCap,
+    plainEnglish: `The whole company is valued at about ${formattedCap}.`,
+  });
+  if (week52Low !== null && week52High !== null) {
+    key_metrics_explained.push({
+      metric: "52-Week Range",
+      value: `$${week52Low.toFixed(2)} - $${week52High.toFixed(2)}`,
+      plainEnglish: `The lowest and highest prices the stock traded at over the past 12 months.`,
+    });
+  }
+
+  return {
+    summary,
+    strengths,
+    risks,
+    technical_outlook: trend.plainSummary,
+    key_metrics_explained,
+  };
+}
+
+/**
+ * Direct code-computed answer for "Is the price high or low right now?" (0 Gemini calls).
+ */
+export function answerPriceHighOrLow(params: {
+  companyName: string;
+  symbol: string;
+  currentPrice: number;
+  low52: number | null;
+  high52: number | null;
+  peRatio?: number | null;
+}): string {
+  const { companyName, symbol, currentPrice, low52, high52, peRatio } = params;
+  if (!low52 || !high52 || high52 <= low52) {
+    return `For ${companyName} (${symbol}), the current price is $${currentPrice.toFixed(2)}. Without full 52-week trading bounds reported, we look at recent daily closes to monitor its ongoing price corridor.`;
+  }
+
+  const rangeSpan = high52 - low52;
+  const ratio = (currentPrice - low52) / rangeSpan;
+  const posPct = Math.round(ratio * 100);
+
+  let positionText = "";
+  if (ratio <= 0.33) {
+    positionText = `currently trading near its yearly low (about ${posPct}% up from the bottom of its 52-week range). Buyers are paying less per share than they did for most of the past year.`;
+  } else if (ratio >= 0.67) {
+    positionText = `currently trading near its yearly high (about ${posPct}% toward the top of its 52-week range). The stock has had strong momentum, meaning current buyers are paying toward the higher end of its 12-month corridor.`;
+  } else {
+    positionText = `trading right in the middle of its yearly corridor (about ${posPct}% of the way between its low and high). Price levels are balanced compared to the past 12 months.`;
+  }
+
+  const peText =
+    peRatio && peRatio > 0
+      ? ` In terms of earnings, investors pay about $${peRatio.toFixed(1)} for each $1 the company earns in a year.`
+      : "";
+
+  return `${companyName} (${symbol}) is ${positionText} Over the past year, it has traded between $${low52.toFixed(2)} and $${high52.toFixed(2)}.${peText} Informational only. Not financial advice.`;
+}
+
+/**
+ * Direct code-computed answer for "How risky is it?" (0 Gemini calls).
+ */
+export function answerHowRisky(params: {
+  companyName: string;
+  symbol: string;
+  beta: number | null;
+  candles: CandleDataPoint[];
+}): string {
+  const { companyName, symbol, beta, candles } = params;
+  const vol = getVolatility(candles, beta);
+
+  let betaText = "tends to move closely alongside the overall market";
+  if (beta !== null) {
+    if (beta > 1.2) {
+      betaText = `tends to move a bit more than the overall market (Beta ${beta.toFixed(2)}), so price swings will feel wider`;
+    } else if (beta < 0.85) {
+      betaText = `tends to move a bit less than the overall market (Beta ${beta.toFixed(2)}), offering calmer price movement`;
+    }
+  }
+
+  const dropText =
+    vol.maxDrawdownPct !== null
+      ? ` Over the historical data analyzed, its deepest single price drop was around ${vol.maxDrawdownPct}%.`
+      : "";
+
+  return `Risk for ${companyName} (${symbol}) is rated as ${vol.label.toLowerCase()}. The stock ${betaText}.${dropText} Stock prices fluctuate with economic news and company performance. Past performance does not predict the future. Informational only. Not financial advice.`;
+}
+
+/**
+ * Direct code-computed answer for "Does it pay dividends?" (0 Gemini calls).
+ */
+export function answerDoesItPayDividends(params: {
+  companyName: string;
+  symbol: string;
+  dividendYield: number | null;
+}): string {
+  const { companyName, symbol, dividendYield } = params;
+  if (dividendYield && dividendYield > 0) {
+    const annualPer100 = (dividendYield).toFixed(2);
+    return `Yes, ${companyName} (${symbol}) pays an annual dividend yield of about ${dividendYield.toFixed(2)}%. That means for every $100 worth of shares you hold, the company pays about $${annualPer100} back to you in cash each year, usually divided into four quarterly payments. Informational only. Not financial advice.`;
+  }
+
+  return `No, ${companyName} (${symbol}) does not currently pay a cash dividend. Instead, the company reinvests 100% of its profits back into research, hiring, expanding operations, and growing the business. Shareholders look for value through company growth rather than cash payouts. Informational only. Not financial advice.`;
+}
+
+/**
+ * Direct answer for "Is this company doing well?" using existing data (0 Gemini calls).
+ */
+export function answerIsCompanyDoingWell(params: {
+  companyName: string;
+  symbol: string;
+  marketCapMillions: number | null;
+  eps: number | null;
+  roe: number | null;
+  existingSummary?: string;
+}): string {
+  const { companyName, symbol, marketCapMillions, eps, roe, existingSummary } = params;
+
+  if (existingSummary && existingSummary.trim().length > 20) {
+    return `${existingSummary} Management generated $${eps !== null ? eps.toFixed(2) : "--"} in profit per share over the past year. Informational only. Not financial advice.`;
+  }
+
+  const formattedCap = formatMarketCapWords(marketCapMillions);
+  const profitText =
+    eps !== null && eps > 0
+      ? `The company is profitable, generating about $${eps.toFixed(2)} in profit per share over the last 12 months.`
+      : "The company focuses heavily on growth and market share.";
+  const roeText =
+    roe !== null
+      ? ` Management generated about $${roe.toFixed(1)} of profit for every $100 of shareholder capital.`
+      : "";
+
+  return `${companyName} (${symbol}) is valued at about ${formattedCap}. ${profitText}${roeText} Review the fundamental cards above for verified financial metrics. Informational only. Not financial advice.`;
+}

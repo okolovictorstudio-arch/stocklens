@@ -8,6 +8,7 @@ import { AIAnalysisCard } from "@/components/stock/AIAnalysisCard";
 import { FundamentalsGrid } from "@/components/stock/FundamentalsGrid";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { cleanCompanyName } from "@/lib/utils";
 import type { StockDetailsResponse } from "@/app/api/stock/route";
 import type { ChatActionType } from "@/types/chat";
 
@@ -15,6 +16,7 @@ interface StockOverviewMessageProps {
   symbol: string;
   companyName: string;
   onSelectQuestion?: (question: string, actionType?: ChatActionType) => void;
+  onDataLoaded?: (data: StockDetailsResponse) => void;
 }
 
 export const QUICK_QUESTIONS: Array<{
@@ -33,6 +35,7 @@ export function StockOverviewMessage({
   symbol,
   companyName,
   onSelectQuestion,
+  onDataLoaded,
 }: StockOverviewMessageProps) {
   const [data, setData] = React.useState<StockDetailsResponse | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -55,6 +58,7 @@ export function StockOverviewMessage({
         const json: StockDetailsResponse = await res.json();
         if (!isCancelled) {
           setData(json);
+          onDataLoaded?.(json);
         }
       } catch (err) {
         if (!isCancelled) {
@@ -76,7 +80,7 @@ export function StockOverviewMessage({
     return () => {
       isCancelled = true;
     };
-  }, [symbol, retryCount]);
+  }, [symbol, retryCount, onDataLoaded]);
 
   if (isLoading) {
     return (
@@ -171,7 +175,7 @@ export function StockOverviewMessage({
       <div className="rounded-2xl border border-border/70 bg-card/60 p-4 sm:p-5 space-y-3">
         <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           <MessageCircleQuestion className="size-4.5 text-primary" />
-          <span>Quick questions about {data.profile?.name || companyName || data.symbol}</span>
+          <span>Quick questions about {cleanCompanyName(data.profile?.name || companyName || data.symbol)}</span>
         </div>
 
         <div className="flex flex-wrap gap-2.5">

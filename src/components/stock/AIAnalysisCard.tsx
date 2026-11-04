@@ -15,6 +15,7 @@ import {
   BookOpen,
   WifiOff,
   ServerCrash,
+  Info,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,11 +64,11 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
     let isCancelled = false;
     const controller = new AbortController();
 
-    // Client-side hard timeout (28 seconds): guaranteed never to stay in an infinite spinner
+    // Client-side hard timeout (28 seconds)
     const timer = setTimeout(() => {
       if (!isCancelled) {
         console.warn("[AIAnalysisCard] Client 28s timeout triggered");
-        setErrorMsg("The AI service is busy, try again in a minute.");
+        setErrorMsg("AI service is busy");
         setErrorType("MODEL_UNAVAILABLE");
         setIsLoading(false);
         controller.abort();
@@ -93,18 +94,22 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
 
         if (!res.ok) {
           const errData = json as ApiErrorResponse;
-          setErrorType(errData.errorType || "UNKNOWN_ERROR");
-          throw new Error(errData.error || "The AI service is busy, try again in a minute.");
+          const detectedType = errData.errorType || "UNKNOWN_ERROR";
+          setErrorType(detectedType);
+          throw new Error(errData.error || "Something went wrong on our side.");
         }
 
         setData(json);
         setErrorMsg(null);
+        if (json.errorType) {
+          setErrorType(json.errorType as GeminiErrorType);
+        }
       } catch (err: unknown) {
         if (isCancelled) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
 
         console.error("[AIAnalysisCard] Fetch error:", err);
-        const msg = err instanceof Error ? err.message : "The AI service is busy, try again in a minute.";
+        const msg = err instanceof Error ? err.message : "Something went wrong on our side.";
         setErrorMsg(msg);
       } finally {
         clearTimeout(timer);
@@ -127,22 +132,34 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
     return <AIAnalysisSkeleton />;
   }
 
-  // Error State Handling with friendly messages and no raw error leaks
-  if (errorMsg || !data) {
+  // Error State Handling when NO data is available
+  if ((errorMsg || !data) && !data?.analysis) {
     const isMissingKey = errorType === "MISSING_KEY";
-    const isQuota = errorType === "QUOTA_EXCEEDED";
-    const isNetwork = errorType === "NETWORK_ERROR";
+    const isDailyLimit = errorType === "DAILY_QUOTA_EXCEEDED";
+    const isRateLimit = errorType === "RATE_LIMITED";
     const isModelUnavail = errorType === "MODEL_UNAVAILABLE";
+    const isNetwork = errorType === "NETWORK_ERROR";
+
+    let displayMsg = errorMsg || "Something went wrong on our side.";
+    if (isDailyLimit) {
+      displayMsg = "AI explanations have reached their daily limit and return tomorrow. Numbers, charts and the history card still work.";
+    } else if (isRateLimit) {
+      displayMsg = "Try again in a few seconds";
+    } else if (isModelUnavail) {
+      displayMsg = "AI service is busy";
+    }
 
     const errorTitle = isMissingKey
       ? "Gemini API Key Required"
-      : isQuota
-      ? "AI Rate Limit Reached"
+      : isDailyLimit
+      ? "Daily AI Quota Reached"
+      : isRateLimit
+      ? "Short-Term Limit Reached"
       : isNetwork
       ? "Network Connection Issue"
       : isModelUnavail
       ? "AI Service Busy"
-      : "AI Analysis Temporarily Unavailable";
+      : "Notice";
 
     const errorIcon = isNetwork ? (
       <WifiOff className="size-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -156,7 +173,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
       <div className="rounded-2xl border border-border bg-card p-6 shadow-2xs space-y-4">
         <div className="flex items-center gap-2 text-foreground font-semibold">
           <Sparkles className="size-4.5 text-sky-500" />
-          <span>AI Market & Metric Synthesis</span>
+          <span>Plain-Language Overview</span>
         </div>
 
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 space-y-3">
@@ -167,7 +184,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
                 {errorTitle}
               </h3>
               <p className="text-xs text-amber-800/90 dark:text-amber-300/80 leading-relaxed">
-                {errorMsg || "The AI service is busy, try again in a minute."}
+                {displayMsg}
               </p>
             </div>
           </div>
@@ -183,12 +200,16 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
                 <span>Get Free Gemini Key</span>
                 <ExternalLink className="size-3" />
               </a>
+            ) : isDailyLimit ? (
+              <span className="text-xs text-muted-foreground">
+                Charts and history cards remain fully accessible below.
+              </span>
             ) : (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={refetch}
-                className="gap-1.5 text-xs rounded-lg cursor-pointer"
+                className="gap-1.5 text-xs rounded-lg cursor-pointer min-h-[44px]"
               >
                 <RefreshCw className="size-3.5" />
                 <span>Try again</span>
@@ -200,12 +221,14 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
     );
   }
 
-  const { analysis, groundTruthData, disclaimer } = data;
-  const activeModel = "gemini-3.8-flash";
+  const { analysis, groundTruthData, disclaimer, isQuickSummary, errorType: responseErrorType } = data!;
+  const isDailyLimit = responseErrorType === "DAILY_QUOTA_EXCEEDED";
+  const isRateLimit = responseErrorType === "RATE_LIMITED";
+  const isModelBusy = responseErrorType === "MODEL_UNAVAILABLE";
 
   return (
     <div className="rounded-2xl border border-border bg-card p-6 shadow-2xs space-y-6">
-      {/* Header with Model Badge & Disclaimer */}
+      {/* Header with Disclaimer (Model badge removed from UI) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-4">
         <div className="flex items-center gap-2.5">
           <div className="flex size-9 items-center justify-center rounded-xl bg-sky-500/10 text-sky-500">
@@ -214,11 +237,13 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base sm:text-lg font-semibold tracking-tight text-foreground">
-                Plain-Language Overview
+                {isQuickSummary ? "Quick Summary" : "Plain-Language Overview"}
               </h2>
-              <Badge variant="outline" className="text-xs font-mono border-sky-500/30 text-sky-600 dark:text-sky-400">
-                {activeModel}
-              </Badge>
+              {isQuickSummary && (
+                <Badge variant="secondary" className="text-xs">
+                  Market Data Summary
+                </Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">
               Friendly, honest facts calculated strictly from verified market data.
@@ -233,24 +258,53 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
         </div>
       </div>
 
+      {/* AI Unavailable Banner if Quick Summary is active */}
+      {isQuickSummary && (
+        <div className="rounded-xl border border-border/80 bg-muted/30 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <Info className="size-4 text-sky-500 shrink-0" />
+            <span>
+              {isDailyLimit
+                ? "AI explanations have reached their daily limit and return tomorrow. Numbers, charts and the history card still work."
+                : isRateLimit
+                ? "Try again in a few seconds."
+                : isModelBusy
+                ? "AI service is busy. Showing verified summary built from market numbers."
+                : "Showing verified summary built directly from market data."}
+            </span>
+          </div>
+          {!isDailyLimit && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refetch}
+              className="min-h-[44px] px-3 text-xs rounded-xl cursor-pointer shrink-0 self-end sm:self-auto"
+            >
+              <RefreshCw className="size-3.5 mr-1.5" />
+              <span>Try again</span>
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Executive Summary */}
       <div className="rounded-xl border border-border/70 bg-muted/20 p-5 space-y-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground uppercase tracking-wider">
           <BookOpen className="size-4 text-primary" />
           <span>What You Need to Know</span>
         </div>
-        <p className="text-base text-foreground/95 leading-relaxed">
+        <p className="text-base text-foreground/95 leading-relaxed font-sans">
           {analysis.summary}
         </p>
       </div>
 
-      {/* Technical Outlook */}
+      {/* Recent Price Trend (Strictly no indicator names) */}
       <div className="rounded-xl border border-border/70 bg-card p-5 space-y-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground uppercase tracking-wider">
           <Activity className="size-4 text-emerald-500" />
-          <span>Price Momentum & Trend</span>
+          <span>Recent Price Trend</span>
         </div>
-        <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
+        <p className="text-sm sm:text-base text-muted-foreground leading-relaxed font-sans">
           {analysis.technical_outlook}
         </p>
       </div>
@@ -265,7 +319,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
           </div>
           <ul className="space-y-2.5">
             {analysis.strengths.map((item, idx) => (
-              <li key={idx} className="flex items-start gap-2 text-sm text-foreground/90 leading-relaxed">
+              <li key={idx} className="flex items-start gap-2 text-sm text-foreground/90 leading-relaxed font-sans">
                 <span className="text-emerald-500 font-bold shrink-0">•</span>
                 <span>{item}</span>
               </li>
@@ -281,7 +335,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
           </div>
           <ul className="space-y-2.5">
             {analysis.risks.map((item, idx) => (
-              <li key={idx} className="flex items-start gap-2 text-sm text-foreground/90 leading-relaxed">
+              <li key={idx} className="flex items-start gap-2 text-sm text-foreground/90 leading-relaxed font-sans">
                 <span className="text-amber-500 font-bold shrink-0">•</span>
                 <span>{item}</span>
               </li>
@@ -290,7 +344,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
         </div>
       </div>
 
-      {/* Key Metrics Explained for Beginners */}
+      {/* Key Metrics Explained for Beginners (Explain each fact once) */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">
           Everyday Explanations of Key Numbers
@@ -303,11 +357,11 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
             >
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-sm font-semibold text-foreground">{metric.metric}</span>
-                <span className="font-mono text-sm font-bold text-primary tabular-nums">
+                <span className="text-sm font-bold text-primary tabular-nums font-sans">
                   {String(metric.value)}
                 </span>
               </div>
-              <p className="text-sm text-muted-foreground leading-relaxed">
+              <p className="text-sm text-muted-foreground leading-relaxed font-sans">
                 {metric.plainEnglish}
               </p>
             </div>
@@ -337,7 +391,7 @@ export function AIAnalysisCard({ symbol }: AIAnalysisCardProps) {
             <p className="text-sm text-muted-foreground leading-relaxed">
               StockLens explicitly instructs the Gemini model to reference only these verified numbers. Users can verify that every statement in the analysis aligns with the data below:
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-sm tabular-nums">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-sm tabular-nums font-sans">
               <div className="bg-background/60 p-2.5 rounded-lg border border-border/40">
                 <div className="text-xs text-muted-foreground">Price</div>
                 <div className="font-semibold text-foreground">{groundTruthData.currentPrice}</div>

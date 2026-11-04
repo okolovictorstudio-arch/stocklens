@@ -16,6 +16,7 @@ import {
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { removeRecentChat } from "@/lib/recent-chats";
 import { useSidebarCollapsed } from "@/lib/sidebar-state";
+import { cleanCompanyName } from "@/lib/utils";
 import type { RecentChat } from "@/types/chat";
 
 interface AppSidebarProps {
@@ -283,7 +284,7 @@ export function AppSidebar({
                           <MessageSquare className="size-4.5 shrink-0 opacity-70" />
                           {!isCollapsed && (
                             <span className="truncate text-sm font-medium">
-                              {chat.companyName}
+                              {cleanCompanyName(chat.companyName || chat.symbol)}
                             </span>
                           )}
                         </button>

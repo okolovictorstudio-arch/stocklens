@@ -738,7 +738,7 @@ export function PriceChart({
 
       {/* Floating Hover Metric Bar */}
       {inspected && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-mono text-muted-foreground bg-muted/20 px-3.5 py-2 rounded-xl border border-border/40 tabular-nums">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-sans text-muted-foreground bg-muted/20 px-3.5 py-2 rounded-xl border border-border/40 tabular-nums">
           <div>
             <span className="text-xs uppercase text-muted-foreground/80">O: </span>
             <span className="font-semibold text-foreground">${inspected.open.toFixed(2)}</span>

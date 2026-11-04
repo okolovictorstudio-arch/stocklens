@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { StockQuote, StockProfile, StockFundamentals, CandleDataPoint } from "@/types/stock";
 import { computeAtAGlanceOverview } from "@/lib/analytics";
+import { cleanCompanyName } from "@/lib/utils";
 
 interface AtAGlanceCardProps {
   quote: StockQuote;
@@ -34,7 +35,7 @@ export function AtAGlanceCard({
   candles,
 }: AtAGlanceCardProps) {
   const isPositive = quote.change >= 0;
-  const companyName = profile?.name || quote.symbol;
+  const companyName = cleanCompanyName(profile?.name || quote.symbol);
 
   const overview = React.useMemo(() => {
     return computeAtAGlanceOverview({
@@ -83,27 +84,32 @@ export function AtAGlanceCard({
         </div>
 
         {/* Current price and daily change */}
-        <div className="flex items-baseline gap-2.5 sm:text-right">
-          <div className="text-2xl sm:text-3xl font-bold text-foreground font-mono tabular-nums">
-            ${quote.currentPrice.toFixed(2)}
+        <div className="flex flex-col sm:items-end">
+          <div className="flex items-baseline gap-2.5 sm:text-right">
+            <div className="text-2xl sm:text-3xl font-bold text-foreground font-sans tabular-nums">
+              ${quote.currentPrice.toFixed(2)}
+            </div>
+            <div
+              className={`flex items-center gap-1 text-sm sm:text-base font-semibold font-sans tabular-nums ${
+                isPositive
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              {isPositive ? (
+                <TrendingUp className="size-4 shrink-0" />
+              ) : (
+                <TrendingDown className="size-4 shrink-0" />
+              )}
+              <span>
+                {isPositive ? "+" : ""}
+                {quote.change.toFixed(2)} ({isPositive ? "+" : ""}
+                {quote.percentChange.toFixed(2)}%)
+              </span>
+            </div>
           </div>
-          <div
-            className={`flex items-center gap-1 text-sm sm:text-base font-semibold font-mono tabular-nums ${
-              isPositive
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-rose-600 dark:text-rose-400"
-            }`}
-          >
-            {isPositive ? (
-              <TrendingUp className="size-4 shrink-0" />
-            ) : (
-              <TrendingDown className="size-4 shrink-0" />
-            )}
-            <span>
-              {isPositive ? "+" : ""}
-              {quote.change.toFixed(2)} ({isPositive ? "+" : ""}
-              {quote.percentChange.toFixed(2)}%)
-            </span>
+          <div className="text-xs text-muted-foreground mt-0.5 font-medium">
+            {quote.marketStatus === "open" ? "Market open" : "Last closing price"}
           </div>
         </div>
       </div>
@@ -144,7 +150,7 @@ export function AtAGlanceCard({
               <div className="text-base sm:text-lg font-bold text-foreground">
                 {overview.companySize.label}
               </div>
-              <span className="text-sm font-mono text-muted-foreground tabular-nums">
+              <span className="text-sm font-sans font-medium text-muted-foreground tabular-nums">
                 {overview.companySize.formattedCap}
               </span>
             </div>
@@ -214,11 +220,11 @@ export function AtAGlanceCard({
                 {overview.volatility.label}
               </div>
               {overview.volatility.maxDrawdownPct !== null ? (
-                <span className="text-sm font-mono text-muted-foreground tabular-nums">
+                <span className="text-sm font-sans font-medium text-muted-foreground tabular-nums">
                   -{overview.volatility.maxDrawdownPct}% dip
                 </span>
               ) : overview.volatility.beta !== null ? (
-                <span className="text-sm font-mono text-muted-foreground tabular-nums">
+                <span className="text-sm font-sans font-medium text-muted-foreground tabular-nums">
                   β {overview.volatility.beta.toFixed(2)}
                 </span>
               ) : null}

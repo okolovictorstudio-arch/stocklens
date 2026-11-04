@@ -1,7 +1,7 @@
 /**
  * Google Gemini AI client layer for StockLens.
- * Powered by the official @google/genai SDK with structured output validation,
- * hard timeouts, selective retries, and fallback model support.
+ * Powered by the official @google/genai SDK with multi-model fallback chain,
+ * strict quota management, structured output validation, and plain-language enforcement.
  */
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import {
@@ -13,18 +13,20 @@ import {
 } from "@/types/analysis";
 import type { InvestmentScenario } from "@/lib/analytics";
 
-// Primary free-tier Flash model in Google AI Studio
-export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-export const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || "";
+// Default model hierarchy: primary fast-flash, then fallback lite, then 3.8
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+export const GEMINI_FALLBACK_MODELS =
+  process.env.GEMINI_FALLBACK_MODELS || process.env.GEMINI_FALLBACK_MODEL || "gemini-3.1-flash-lite,gemini-3.8-flash";
 
 export const DISCLAIMER_TEXT = "Informational only. Not financial advice.";
 
 export type GeminiErrorType =
-  | "MISSING_KEY"
-  | "QUOTA_EXCEEDED"
+  | "DAILY_QUOTA_EXCEEDED"
+  | "RATE_LIMITED"
   | "MODEL_UNAVAILABLE"
   | "NETWORK_ERROR"
   | "VALIDATION_ERROR"
+  | "MISSING_KEY"
   | "UNKNOWN_ERROR";
 
 export class GeminiAnalysisError extends Error {
@@ -35,6 +37,81 @@ export class GeminiAnalysisError extends Error {
     this.name = "GeminiAnalysisError";
     this.errorType = errorType;
   }
+}
+
+/**
+ * Global in-memory memory for exhausted models and startup call counter (survives dev HMR).
+ */
+interface ExhaustedModelEntry {
+  exhaustedUntil: number;
+  reason: "daily" | "rate" | "unavailable";
+}
+
+const gState = globalThis as unknown as {
+  __geminiExhaustedModels?: Map<string, ExhaustedModelEntry>;
+  __geminiTotalCallCount?: number;
+};
+
+if (!gState.__geminiExhaustedModels) {
+  gState.__geminiExhaustedModels = new Map();
+}
+if (typeof gState.__geminiTotalCallCount !== "number") {
+  gState.__geminiTotalCallCount = 0;
+}
+
+const exhaustedModels = gState.__geminiExhaustedModels;
+
+function isModelExhausted(model: string): boolean {
+  const entry = exhaustedModels.get(model);
+  if (!entry) return false;
+  if (Date.now() >= entry.exhaustedUntil) {
+    exhaustedModels.delete(model);
+    return false;
+  }
+  return true;
+}
+
+function markModelExhausted(model: string, reason: "daily" | "rate" | "unavailable", retryDelayMs?: number) {
+  const durationMs =
+    retryDelayMs && retryDelayMs > 0
+      ? retryDelayMs
+      : reason === "daily"
+      ? 3600 * 1000 // Remember for 1 hour by default
+      : reason === "rate"
+      ? 60 * 1000 // 1 minute
+      : 15 * 1000; // 15 seconds for 503
+  const exhaustedUntil = Date.now() + durationMs;
+  exhaustedModels.set(model, { exhaustedUntil, reason });
+  console.warn(
+    `[Gemini Quota] Model ${model} marked exhausted (${reason}) until ${new Date(
+      exhaustedUntil
+    ).toLocaleTimeString()} (${Math.round(durationMs / 1000)}s)`
+  );
+}
+
+function recordGeminiCall(route: string, model: string) {
+  gState.__geminiTotalCallCount = (gState.__geminiTotalCallCount || 0) + 1;
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[Gemini Stats] Total Gemini calls since server startup: ${gState.__geminiTotalCallCount} (route=${route}, model=${model})`
+    );
+  }
+}
+
+export function getCandidateModels(): string[] {
+  const primary = (process.env.GEMINI_MODEL || "gemini-3.5-flash-lite").trim();
+  const fallbackRaw = (
+    process.env.GEMINI_FALLBACK_MODELS ||
+    process.env.GEMINI_FALLBACK_MODEL ||
+    "gemini-3.1-flash-lite,gemini-3.8-flash"
+  ).trim();
+
+  const fallbacks = fallbackRaw
+    .split(",")
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0 && m !== primary);
+
+  return [primary, ...fallbacks];
 }
 
 function getApiKey(): string | null {
@@ -58,16 +135,16 @@ Your goal is to provide clear, calm, and strictly data-grounded explanations wit
 CRITICAL PLAIN-LANGUAGE RULES:
 1. Explain like a friendly, honest friend who knows finance.
 2. Write for a smart 15-year-old. Short sentences.
-3. NO financial jargon without an immediate one-line explanation in everyday words:
-   - P/E ratio: "You pay about $X for every $1 the company earns in a year."
-   - Market cap: "The whole company is valued at about $X."
-   - Beta: "Moves more or less than the overall market."
-4. NEVER provide buy, sell, or hold recommendations under any circumstance.
-5. NEVER say "good investment", "bad investment", "undervalued", or "overvalued". Describe differences and trade-offs, never recommend.
+3. NEVER USE TECHNICAL INDICATOR JARGON:
+   - Do NOT use SMA, EMA, RSI, MACD, "moving average", or "histogram" anywhere.
+   - Describe price movement using everyday words only (e.g. "over the past month the price has mostly moved sideways").
+4. SHOW EACH FACT ONCE:
+   - Do not repeat P/E, Market Cap, or Beta across Strengths and Risks if already described in Key Metrics.
+   - Reword Beta as "tends to move a bit more (or less) than the overall market".
+5. NEVER provide buy, sell, or hold recommendations under any circumstance.
 6. NO future price predictions or speculative forecasts.
 7. ONLY USE THE PROVIDED NUMBERS. Never invent, extrapolate, or hallucinate figures.
-8. If any metric is labeled "unavailable", state clearly that it is not currently reported and do not guess.
-9. Always adhere strictly to the JSON schema output.
+8. Always adhere strictly to the JSON schema output.
 `.trim();
 
 /**
@@ -85,15 +162,9 @@ function sanitizeLog(msg: string, apiKey?: string | null): string {
 
 /**
  * Resolves the lowest thinking configuration supported by the given model.
- * In the @google/genai SDK:
- * - Gemini 3.x models (e.g. gemini-3.8-flash, gemini-3.5-flash-lite) do NOT accept thinkingBudget (returns HTTP 400).
- * - They use thinkingLevel instead.
- * - For gemini-3.8-flash, thinkingLevel="minimal" is rejected with HTTP 400, and "low" is the lowest supported level.
- * - For gemini-3.5-flash-lite, "low" is also supported and completes in ~500ms.
- * - Legacy Gemini 2.x models supported thinkingBudget: 0.
  */
 function getThinkingConfig(model: string): { thinkingLevel: ThinkingLevel } | { thinkingBudget: number } {
-  if (model.includes("3.8") || model.includes("3.5") || model.includes("3.")) {
+  if (model.includes("3.8") || model.includes("3.5") || model.includes("3.1") || model.includes("3.")) {
     return { thinkingLevel: ThinkingLevel.LOW };
   }
   return { thinkingBudget: 0 };
@@ -102,34 +173,57 @@ function getThinkingConfig(model: string): { thinkingLevel: ThinkingLevel } | { 
 /**
  * Extracts normalized HTTP status code and error classification from SDK errors.
  */
-function extractHttpStatusAndType(err: unknown): { status: number | string; type: string } {
+function extractHttpStatusAndType(err: unknown): {
+  status: number | string;
+  type: GeminiErrorType;
+  isDaily: boolean;
+  retryDelayMs?: number;
+} {
   const statusNum = (err as { status?: number })?.status;
   const rawMsg = err instanceof Error ? err.message : String(err);
+  const lower = rawMsg.toLowerCase();
 
   let detectedStatus: number | string = statusNum || "unknown";
-  let detectedType = "UNKNOWN_ERROR";
+  let detectedType: GeminiErrorType = "UNKNOWN_ERROR";
+  let isDaily = false;
+  let retryDelayMs: number | undefined = undefined;
 
-  if (rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED") || detectedStatus === 429) {
+  // Check for retryDelay in details
+  const delayMatch = rawMsg.match(/"retryDelay"\s*:\s*"(\d+)s"/i);
+  if (delayMatch) {
+    retryDelayMs = parseInt(delayMatch[1], 10) * 1000;
+  }
+
+  if (lower.includes("429") || lower.includes("resource_exhausted") || detectedStatus === 429) {
     detectedStatus = 429;
-    detectedType = "QUOTA_EXCEEDED";
-  } else if (rawMsg.includes("503") || rawMsg.includes("UNAVAILABLE") || detectedStatus === 503) {
+    if (
+      lower.includes("daily") ||
+      lower.includes("per day") ||
+      lower.includes("generaterequestsperday") ||
+      lower.includes("limit: 20") ||
+      lower.includes("limit: 500") ||
+      (retryDelayMs && retryDelayMs > 3600 * 1000)
+    ) {
+      isDaily = true;
+      detectedType = "DAILY_QUOTA_EXCEEDED";
+    } else {
+      detectedType = "RATE_LIMITED";
+    }
+  } else if (lower.includes("503") || lower.includes("unavailable") || lower.includes("overloaded") || detectedStatus === 503) {
     detectedStatus = 503;
     detectedType = "MODEL_UNAVAILABLE";
-  } else if (rawMsg.includes("400") || rawMsg.includes("INVALID_ARGUMENT") || detectedStatus === 400) {
+  } else if (lower.includes("400") || lower.includes("invalid_argument") || detectedStatus === 400) {
     detectedStatus = 400;
-    detectedType = "INVALID_ARGUMENT";
-  } else if (rawMsg.includes("404") || rawMsg.includes("NOT_FOUND") || detectedStatus === 404) {
-    detectedStatus = 404;
-    detectedType = "MODEL_NOT_FOUND";
-  } else if (rawMsg.includes("401") || rawMsg.includes("403")) {
-    detectedStatus = detectedStatus !== "unknown" ? detectedStatus : 403;
-    detectedType = "AUTH_ERROR";
-  } else if (rawMsg.toLowerCase().includes("fetch failed") || rawMsg.toLowerCase().includes("enotfound")) {
+    detectedType = "UNKNOWN_ERROR";
+  } else if (lower.includes("401") || lower.includes("403")) {
+    detectedStatus = 403;
+    detectedType = "MISSING_KEY";
+  } else if (lower.includes("fetch failed") || lower.includes("enotfound")) {
     detectedStatus = "network";
     detectedType = "NETWORK_ERROR";
   }
 
-  return { status: detectedStatus, type: detectedType };
+  return { status: detectedStatus, type: detectedType, isDaily, retryDelayMs };
 }
 
 /**
@@ -164,6 +258,8 @@ async function callGeminiWithTimeout(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const thinkingConfig = getThinkingConfig(model);
 
+  recordGeminiCall(route, model);
+
   try {
     const response = await ai.models.generateContent({
       model,
@@ -184,12 +280,9 @@ async function callGeminiWithTimeout(
         model,
         attempt,
         remainingMs,
-        outcome: "error HTTP 503 (MODEL_UNAVAILABLE: empty response text)",
+        outcome: "error HTTP 503 (empty response text)",
       });
-      throw new GeminiAnalysisError(
-        "The AI service is busy, try again in a minute.",
-        "MODEL_UNAVAILABLE"
-      );
+      throw new GeminiAnalysisError("AI service is busy", "MODEL_UNAVAILABLE");
     }
 
     logGeminiAttempt({
@@ -211,20 +304,25 @@ async function callGeminiWithTimeout(
         remainingMs,
         outcome: `error TIMEOUT (exceeded ${timeoutMs}ms attempt budget)`,
       });
-      throw new GeminiAnalysisError(
-        "The AI service is busy, try again in a minute.",
-        "MODEL_UNAVAILABLE"
-      );
+      throw new GeminiAnalysisError("AI service is busy", "MODEL_UNAVAILABLE");
     }
 
-    const { status, type } = extractHttpStatusAndType(err);
+    const { status, type, isDaily, retryDelayMs } = extractHttpStatusAndType(err);
     logGeminiAttempt({
       route,
       model,
       attempt,
       remainingMs,
-      outcome: `error HTTP ${status} (${type})`,
+      outcome: `error HTTP ${status} (${type}${isDaily ? " daily" : ""})`,
     });
+
+    if (type === "DAILY_QUOTA_EXCEEDED") {
+      markModelExhausted(model, "daily", retryDelayMs);
+    } else if (type === "RATE_LIMITED") {
+      markModelExhausted(model, "rate", retryDelayMs || 60000);
+    } else if (status === 503) {
+      markModelExhausted(model, "unavailable", 15000);
+    }
 
     throw err;
   } finally {
@@ -248,31 +346,11 @@ function parseAndValidateOutput(text: string): { success: true; data: StockAnaly
   }
 }
 
-function is503Error(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes("503") || m.includes("unavailable") || m.includes("overloaded");
-}
-
-function isQuotaError(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes("429") || m.includes("resource_exhausted") || m.includes("quota") || m.includes("rate");
-}
-
-function isAuthError(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes("401") || m.includes("403") || m.includes("unauthenticated") || m.includes("permission");
-}
-
-function isNotFoundError(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes("404") || m.includes("not found");
-}
-
 /**
- * Generates stock analysis with a shared 25-second overall deadline.
- * - Each attempt's timeout is min(10 seconds, time remaining).
- * - Never starts a retry or fallback with less than 5 seconds remaining.
- * - Returns a friendly "The AI service is busy, try again in a minute." error when budget expires.
+ * Generates stock analysis using a multi-model fallback chain and shared 25-second deadline.
+ * - Tries models in order (GEMINI_MODEL -> GEMINI_FALLBACK_MODELS).
+ * - On 429 daily limit or 503, immediately moves to the next candidate model.
+ * - Remembers exhausted models for retryDelay or 1 hour so they are skipped in future requests.
  */
 export async function generateStockAnalysis(
   data: GroundTruthData,
@@ -280,10 +358,9 @@ export async function generateStockAnalysis(
   routeName: string = "/api/analyze"
 ): Promise<StockAnalysisOutput> {
   const apiKey = getApiKey();
-  const deadline = deadlineTimestamp ?? (Date.now() + 25000);
+  const deadline = deadlineTimestamp ?? Date.now() + 25000;
   const getRemainingMs = () => deadline - Date.now();
 
-  // If no API key configured:
   if (!apiKey) {
     if (isDemoOrDevAllowed()) {
       return generateSampleAnalysis(data);
@@ -294,35 +371,47 @@ export async function generateStockAnalysis(
     );
   }
 
+  // Construct prompt strictly avoiding indicator names and enforcing de-duplication
   const prompt = `
-Analyze the following financial and technical data for ${data.companyName} (${data.symbol}):
+Analyze the financial overview and price movement for ${data.companyName} (${data.symbol}):
 
-[VERIFIED METRICS]
+[VERIFIED COMPANY DATA]
 - Symbol: ${data.symbol}
 - Company: ${data.companyName}
 - Current Price: ${data.currentPrice} (${data.dailyChange} today)
 - Market Status: ${data.marketStatus}
-- 20-Day SMA: ${data.sma20}
-- 50-Day SMA: ${data.sma50}
-- 200-Day SMA: ${data.sma200}
-- 20-Day EMA: ${data.ema20}
-- 14-Day RSI: ${data.rsi14}
-- MACD Line: ${data.macd.line}, Signal: ${data.macd.signal}, Histogram: ${data.macd.histogram}
+- Recent Price Trend: ${data.recentTrendLabel || "moved with normal fluctuations"}
+- Long-Term Trend: ${data.longTermTrendLabel || "trading near its recent average"}
+- Momentum: ${data.momentumLabel || "balanced without extreme swings"}
 - Market Capitalization: ${data.marketCap}
 - P/E Ratio: ${data.peRatio}
 - EPS (TTM): ${data.epsTTM}
 - 52-Week Range: ${data.week52Range}
 - Dividend Yield: ${data.dividendYield}
-- Beta (Volatility): ${data.beta}
+- Beta: ${data.beta}
 - Return on Equity (ROE): ${data.roe}
 - Recent Earnings Surprise: ${data.recentEarningsSurprise || "unavailable"}
+
+CRITICAL PLAIN-LANGUAGE AND DE-DUPLICATION RULES:
+1. NEVER USE INDICATOR NAMES OR VALUES:
+   - Do NOT use SMA, EMA, RSI, MACD, "moving average", or "histogram" anywhere in your response.
+   - Describe the price trend strictly using everyday words (e.g. "over the past month the price has mostly moved sideways", "it has risen steadily").
+2. SHOW EACH FACT ONCE:
+   - Do NOT repeat the company valuation (Market Cap), P/E ratio, or Beta in Strengths and Risks if they appear in Key Metrics.
+   - Strengths must focus on business drivers (e.g. profitable operations, cash generation, balance sheet scale).
+   - Risks must focus on business or valuation cautions (e.g. competitive pressures, consumer demand, economic shifts).
+   - Key Metrics Explained provides a one-line plain English explanation of each reported number.
+3. REWORD BETA:
+   - Always explain beta as "tends to move a bit more (or less) than the overall market". Never use jargon.
+4. NO BUY/SELL RECOMMENDATIONS:
+   - Describe trade-offs, never advise to buy, sell, or hold.
 
 Produce a structured JSON response matching the required schema:
 {
   "summary": "2-3 balanced, beginner-friendly sentences",
-  "strengths": ["2-4 points citing real numbers"],
-  "risks": ["2-4 cautionary points citing real numbers"],
-  "technical_outlook": "Objective description of moving averages, RSI, and MACD",
+  "strengths": ["2-4 points citing business facts without repeating P/E or Market Cap"],
+  "risks": ["2-4 cautionary points citing business facts without repeating P/E or Market Cap"],
+  "technical_outlook": "Everyday description of price trend in plain words. NEVER mention SMA, EMA, RSI, MACD, moving average, or histogram.",
   "key_metrics_explained": [
     { "metric": "name", "value": "value", "plainEnglish": "what this means" }
   ]
@@ -330,215 +419,139 @@ Produce a structured JSON response matching the required schema:
 `.trim();
 
   const ai = new GoogleGenAI({ apiKey });
-  const activeModel = GEMINI_MODEL;
+  const candidates = getCandidateModels();
 
-  // Check remaining time before Attempt 1
-  const remaining1 = getRemainingMs();
-  if (remaining1 < 5000) {
-    logGeminiAttempt({
-      route: routeName,
-      model: activeModel,
-      attempt: 1,
-      remainingMs: remaining1,
-      outcome: "skipped: not enough time left",
-    });
-    throw new GeminiAnalysisError(
-      "The AI service is busy, try again in a minute.",
-      "MODEL_UNAVAILABLE"
-    );
-  }
+  let lastErrorType: GeminiErrorType = "UNKNOWN_ERROR";
+  let hasDailyExhaustionOnAny = false;
+  let hasRateLimitOnAny = false;
+  let has503OnAny = false;
+  let attemptCounter = 0;
 
-  const timeout1 = Math.min(10000, remaining1);
+  for (const model of candidates) {
+    attemptCounter++;
+    const remainingMs = getRemainingMs();
 
-  try {
-    // Attempt 1 with primary model (capped at min(10s, remaining))
-    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout1, routeName, 1, remaining1);
-    const parsed1 = parseAndValidateOutput(text1);
-
-    if (parsed1.success) {
-      return parsed1.data;
-    }
-
-    // Schema validation failed: RETRY ONCE if at least 5s remaining
-    const remainingRetry = getRemainingMs();
-    if (remainingRetry < 5000) {
+    // Check if model is remembered as exhausted
+    if (isModelExhausted(model)) {
+      hasDailyExhaustionOnAny = true;
       logGeminiAttempt({
         route: routeName,
-        model: activeModel,
-        attempt: 2,
-        remainingMs: remainingRetry,
+        model,
+        attempt: attemptCounter,
+        remainingMs,
+        outcome: "skipped: model currently exhausted in cache",
+      });
+      continue;
+    }
+
+    // Check deadline budget before attempting this candidate
+    if (remainingMs < 5000) {
+      logGeminiAttempt({
+        route: routeName,
+        model,
+        attempt: attemptCounter,
+        remainingMs,
         outcome: "skipped: not enough time left",
       });
-      throw new GeminiAnalysisError(
-        "The AI service is busy, try again in a minute.",
-        "MODEL_UNAVAILABLE"
-      );
+      break;
     }
 
-    console.warn("[Gemini] Output failed schema validation. Retrying within remaining time budget...");
-    const timeoutRetry = Math.min(10000, remainingRetry);
-    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, timeoutRetry, routeName, 2, remainingRetry);
-    const parsedRetry = parseAndValidateOutput(textRetry);
+    const timeout = Math.min(10000, remainingMs);
 
-    if (parsedRetry.success) {
-      return parsedRetry.data;
-    }
-
-    throw new GeminiAnalysisError(
-      "The AI service is busy, try again in a minute.",
-      "VALIDATION_ERROR"
-    );
-  } catch (err: unknown) {
-    if (err instanceof GeminiAnalysisError && (err.errorType === "NETWORK_ERROR" || err.errorType === "VALIDATION_ERROR" || err.errorType === "MODEL_UNAVAILABLE")) {
-      throw err;
-    }
-
-    const rawMsg = err instanceof Error ? err.message : String(err);
-    console.error("[Gemini Attempt 1 Error]:", sanitizeLog(rawMsg, apiKey));
-
-    // Never retry on 401, 403, 404, or 429
-    if (isAuthError(rawMsg)) {
-      throw new GeminiAnalysisError(
-        "Invalid Google Gemini API key. Please check your GEMINI_API_KEY in .env.local.",
-        "MISSING_KEY"
-      );
-    }
-    if (isQuotaError(rawMsg)) {
-      throw new GeminiAnalysisError(
-        "The AI service free-tier quota has been reached for this minute. Please try again shortly.",
-        "QUOTA_EXCEEDED"
-      );
-    }
-    if (isNotFoundError(rawMsg)) {
-      throw new GeminiAnalysisError(
-        `The requested AI model (${activeModel}) was not found. Please verify your GEMINI_MODEL setting.`,
-        "MODEL_UNAVAILABLE"
-      );
-    }
-
-    // Handle 503 / UNAVAILABLE: at most 1 retry after 1.5s delay if time permits (>=6.5s)
-    if (is503Error(rawMsg)) {
-      const remainingFor503 = getRemainingMs();
-      if (remainingFor503 < 6500) {
-        logGeminiAttempt({
-          route: routeName,
-          model: activeModel,
-          attempt: 2,
-          remainingMs: remainingFor503,
-          outcome: "skipped: not enough time left",
-        });
-        throw new GeminiAnalysisError(
-          "The AI service is busy, try again in a minute.",
-          "MODEL_UNAVAILABLE"
-        );
+    try {
+      const text = await callGeminiWithTimeout(ai, model, prompt, timeout, routeName, attemptCounter, remainingMs);
+      const parsed = parseAndValidateOutput(text);
+      if (parsed.success) {
+        return parsed.data;
       }
 
-      console.warn("[Gemini] Model reported 503/UNAVAILABLE. Waiting 1.5s before retry...");
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      const remaining2 = getRemainingMs();
-      if (remaining2 < 5000) {
-        logGeminiAttempt({
-          route: routeName,
-          model: activeModel,
-          attempt: 2,
-          remainingMs: remaining2,
-          outcome: "skipped: not enough time left",
-        });
-        throw new GeminiAnalysisError(
-          "The AI service is busy, try again in a minute.",
-          "MODEL_UNAVAILABLE"
+      // Schema validation failed: retry once if time permits
+      const remainingRetry = getRemainingMs();
+      if (remainingRetry >= 5000) {
+        const timeoutRetry = Math.min(10000, remainingRetry);
+        const textRetry = await callGeminiWithTimeout(
+          ai,
+          model,
+          prompt,
+          timeoutRetry,
+          routeName,
+          attemptCounter + 1,
+          remainingRetry
         );
-      }
-
-      const timeout2 = Math.min(10000, remaining2);
-
-      try {
-        const text2 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout2, routeName, 2, remaining2);
-        const parsed2 = parseAndValidateOutput(text2);
-        if (parsed2.success) {
-          return parsed2.data;
-        }
-      } catch (err2: unknown) {
-        const rawMsg2 = err2 instanceof Error ? err2.message : String(err2);
-        console.error("[Gemini Attempt 2 Error]:", sanitizeLog(rawMsg2, apiKey));
-
-        // Optional fallback: if 503 twice and GEMINI_FALLBACK_MODEL is configured
-        if (is503Error(rawMsg2) && GEMINI_FALLBACK_MODEL.trim() !== "") {
-          const remainingFallback = getRemainingMs();
-          const fallbackModel = GEMINI_FALLBACK_MODEL.trim();
-          if (remainingFallback < 5000) {
-            logGeminiAttempt({
-              route: routeName,
-              model: fallbackModel,
-              attempt: 3,
-              remainingMs: remainingFallback,
-              outcome: "skipped: not enough time left",
-            });
-            throw new GeminiAnalysisError(
-              "The AI service is busy, try again in a minute.",
-              "MODEL_UNAVAILABLE"
-            );
-          }
-
-          const timeoutFallback = Math.min(10000, remainingFallback);
-          console.warn(`[Gemini] Primary model 503 twice. Attempting fallback model (${fallbackModel})...`);
-          try {
-            const textFallback = await callGeminiWithTimeout(ai, fallbackModel, prompt, timeoutFallback, routeName, 3, remainingFallback);
-            const parsedFallback = parseAndValidateOutput(textFallback);
-            if (parsedFallback.success) {
-              return parsedFallback.data;
-            }
-          } catch (errFallback: unknown) {
-            console.error(
-              "[Gemini Fallback Model Error]:",
-              sanitizeLog(errFallback instanceof Error ? errFallback.message : String(errFallback), apiKey)
-            );
-          }
+        const parsedRetry = parseAndValidateOutput(textRetry);
+        if (parsedRetry.success) {
+          return parsedRetry.data;
         }
       }
+    } catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const { type, isDaily } = extractHttpStatusAndType(err);
+      lastErrorType = type;
 
-      throw new GeminiAnalysisError(
-        "The AI service is busy, try again in a minute.",
-        "MODEL_UNAVAILABLE"
+      if (isDaily || type === "DAILY_QUOTA_EXCEEDED") {
+        hasDailyExhaustionOnAny = true;
+      } else if (type === "RATE_LIMITED") {
+        hasRateLimitOnAny = true;
+      } else if (type === "MODEL_UNAVAILABLE") {
+        has503OnAny = true;
+      }
+
+      console.warn(
+        `[Gemini Fallback] Model ${model} failed (${type}: ${sanitizeLog(rawMsg, apiKey)}). Moving to next model if available...`
       );
+      // Fall through to next model in candidates chain
     }
+  }
 
-    // Network / other connection failures
-    const lower = rawMsg.toLowerCase();
-    if (lower.includes("fetch failed") || lower.includes("enotfound") || lower.includes("econnrefused")) {
-      throw new GeminiAnalysisError(
-        "Unable to connect to the AI service. Please check your network connection.",
-        "NETWORK_ERROR"
-      );
-    }
-
+  // All candidate models failed or exhausted
+  if (hasDailyExhaustionOnAny) {
     throw new GeminiAnalysisError(
-      "The AI service is busy, try again in a minute.",
-      "MODEL_UNAVAILABLE"
+      "AI explanations have reached their daily limit and return tomorrow. Numbers, charts and the history card still work.",
+      "DAILY_QUOTA_EXCEEDED"
     );
   }
+
+  if (hasRateLimitOnAny) {
+    throw new GeminiAnalysisError("Try again in a few seconds", "RATE_LIMITED");
+  }
+
+  if (has503OnAny) {
+    throw new GeminiAnalysisError("AI service is busy", "MODEL_UNAVAILABLE");
+  }
+
+  if (lastErrorType === "MISSING_KEY") {
+    throw new GeminiAnalysisError(
+      "Invalid Google Gemini API key. Please check your GEMINI_API_KEY in .env.local.",
+      "MISSING_KEY"
+    );
+  }
+
+  throw new GeminiAnalysisError("Something went wrong on our side.", "UNKNOWN_ERROR");
 }
 
 /**
  * Fallback generator for demo/local testing when no API key is provided.
  */
 function generateSampleAnalysis(data: GroundTruthData): StockAnalysisOutput {
+  const trendText = data.recentTrendLabel
+    ? `${data.recentTrendLabel.charAt(0).toUpperCase() + data.recentTrendLabel.slice(1)}, and is currently ${data.longTermTrendLabel || "trading near its recent average"}. Price momentum is ${data.momentumLabel || "balanced"}.`
+    : `Over the past month the price has mostly moved sideways. Price momentum remains balanced without extreme swings.`;
+
   return {
-    summary: `${data.companyName} (${data.symbol}) is currently priced at ${data.currentPrice}. The whole company is valued at ${data.marketCap} and trades at about ${data.peRatio} times its yearly earnings, showing steady investor interest.`,
+    summary: `${data.companyName} (${data.symbol}) is currently priced at ${data.currentPrice}. The whole company is valued at about ${data.marketCap} and trades at about $${data.peRatio} for every $1 the company earns in a year.`,
     strengths: [
-      `The company is valued at ${data.marketCap}, providing deep financial stability and industry scale.`,
-      `Consistently profitable, earning ${data.epsTTM} in profit per share over the past year.`,
+      `The company is valued at about ${data.marketCap}, providing deep financial stability and industry scale.`,
+      `Consistently profitable, producing about ${data.epsTTM} in profit per share over the past year.`,
       data.dividendYield !== "unavailable" && data.dividendYield !== "0.00%"
-        ? `Pays cash back to shareholders with an annual dividend yield of ${data.dividendYield}.`
-        : `Reinvests all profits back into research and expanding operations rather than paying cash out.`,
+        ? `Pays cash back to shareholders with an annual dividend yield of about ${data.dividendYield}.`
+        : `Reinvests all profits back into research, hiring, and expanding operations rather than paying cash out.`,
     ],
     risks: [
-      `A Beta of ${data.beta} means the stock's price will swing alongside broader market mood.`,
-      `Has traded between ${data.week52Range} over the past year, so sudden macroeconomic shifts can affect the price.`,
-      `Competition or changes in consumer demand could affect future profit margins.`,
+      `A Beta of ${data.beta} means the stock tends to move a bit ${parseFloat(data.beta) > 1 ? "more" : "less"} than the overall market.`,
+      `Has traded between ${data.week52Range} over the past year, reflecting normal market price swings.`,
+      `Shifts in consumer demand or economic conditions could impact future revenue and profit margins.`,
     ],
-    technical_outlook: `The 14-day momentum gauge (RSI) is at ${data.rsi14}, sitting safely in the middle without extreme spikes. The 20-day moving average is ${data.sma20}, showing steady recent price action.`,
+    technical_outlook: trendText,
     key_metrics_explained: [
       {
         metric: "P/E Ratio",
@@ -546,7 +559,7 @@ function generateSampleAnalysis(data: GroundTruthData): StockAnalysisOutput {
         plainEnglish: `You pay about $${data.peRatio} for every $1 the company earns in a year.`,
       },
       {
-        metric: "Market Cap",
+        metric: "Market Valuation",
         value: data.marketCap,
         plainEnglish: `The whole company is valued at about ${data.marketCap}.`,
       },
@@ -587,7 +600,7 @@ export async function generateInvestedEarlierAI(
   routeName: string = "/api/invested-earlier"
 ): Promise<InvestedEarlierAIResponse> {
   const apiKey = getApiKey();
-  const deadline = deadlineTimestamp ?? (Date.now() + 25000);
+  const deadline = deadlineTimestamp ?? Date.now() + 25000;
   const getRemainingMs = () => deadline - Date.now();
 
   if (!apiKey) {
@@ -629,12 +642,13 @@ ${formatScenario(data.scenarios["3Y"])}
 ${formatScenario(data.scenarios["5Y"])}
 
 RULES:
-1. Explain in 2-3 friendly, honest sentences what these numbers show.
-2. Compare lump sum vs fixed monthly: explain what happened in plain terms without declaring a "winner" or "best choice". Note that lump sum captures full upside/downside from Day 1, while monthly deposits smooth out the entry price.
-3. Highlight the biggest drop and how long it took to recover.
-4. NEVER call any period the "best time to buy" or "worst time to buy". Never recommend buying, selling, or timing the market.
-5. Emphasize: "Past performance does not predict the future."
-6. Provide output in JSON matching:
+1. Use ONLY the numbers provided above.
+2. Avoid general claims or broad generalizations about investing strategies (do NOT say 'DCA is always better' or 'timing the market is impossible'). Only describe what happened with these exact numbers over these specific timeframes.
+3. Compare lump sum vs fixed monthly in plain terms without declaring a "winner". Note that lump sum puts all money to work on Day 1, while monthly deposits spread purchases over time.
+4. Highlight the biggest drop and how long it took to recover.
+5. NEVER call any period the "best time to buy" or "worst time to buy". Never recommend buying, selling, or timing the market.
+6. Emphasize: "Past performance does not predict the future."
+7. Provide output in JSON matching:
 {
   "summary": "...",
   "lumpVsMonthlyLesson": "...",
@@ -644,61 +658,89 @@ RULES:
 `.trim();
 
   const ai = new GoogleGenAI({ apiKey });
-  const activeModel = GEMINI_MODEL;
+  const candidates = getCandidateModels();
 
-  const remaining1 = getRemainingMs();
-  if (remaining1 < 5000) {
-    logGeminiAttempt({
-      route: routeName,
-      model: activeModel,
-      attempt: 1,
-      remainingMs: remaining1,
-      outcome: "skipped: not enough time left",
-    });
-    throw new GeminiAnalysisError(
-      "The AI service is busy, try again in a minute.",
-      "MODEL_UNAVAILABLE"
-    );
-  }
+  let attemptCounter = 0;
+  let hasDailyExhaustion = false;
+  let hasRateLimit = false;
 
-  const timeout1 = Math.min(10000, remaining1);
+  for (const model of candidates) {
+    attemptCounter++;
+    const remainingMs = getRemainingMs();
 
-  try {
-    const text1 = await callGeminiWithTimeout(ai, activeModel, prompt, timeout1, routeName, 1, remaining1);
-    const parsed1 = parseAndValidateInvestedEarlier(text1);
-    if (parsed1.success) {
-      return parsed1.data;
-    }
-
-    // Validation retry if time permits
-    const remainingRetry = getRemainingMs();
-    if (remainingRetry < 5000) {
+    if (isModelExhausted(model)) {
+      hasDailyExhaustion = true;
       logGeminiAttempt({
         route: routeName,
-        model: activeModel,
-        attempt: 2,
-        remainingMs: remainingRetry,
+        model,
+        attempt: attemptCounter,
+        remainingMs,
+        outcome: "skipped: model currently exhausted in cache",
+      });
+      continue;
+    }
+
+    if (remainingMs < 5000) {
+      logGeminiAttempt({
+        route: routeName,
+        model,
+        attempt: attemptCounter,
+        remainingMs,
         outcome: "skipped: not enough time left",
       });
-      return generateSampleInvestedEarlierAI(data);
+      break;
     }
 
-    const timeoutRetry = Math.min(10000, remainingRetry);
-    const textRetry = await callGeminiWithTimeout(ai, activeModel, prompt, timeoutRetry, routeName, 2, remainingRetry);
-    const parsedRetry = parseAndValidateInvestedEarlier(textRetry);
-    if (parsedRetry.success) {
-      return parsedRetry.data;
-    }
+    const timeout = Math.min(10000, remainingMs);
 
-    return generateSampleInvestedEarlierAI(data);
-  } catch (err: unknown) {
-    if (err instanceof GeminiAnalysisError) throw err;
-    const { type } = extractHttpStatusAndType(err);
+    try {
+      const text = await callGeminiWithTimeout(ai, model, prompt, timeout, routeName, attemptCounter, remainingMs);
+      const parsed = parseAndValidateInvestedEarlier(text);
+      if (parsed.success) {
+        return parsed.data;
+      }
+
+      // Retry once if time permits
+      const remainingRetry = getRemainingMs();
+      if (remainingRetry >= 5000) {
+        const timeoutRetry = Math.min(10000, remainingRetry);
+        const textRetry = await callGeminiWithTimeout(
+          ai,
+          model,
+          prompt,
+          timeoutRetry,
+          routeName,
+          attemptCounter + 1,
+          remainingRetry
+        );
+        const parsedRetry = parseAndValidateInvestedEarlier(textRetry);
+        if (parsedRetry.success) {
+          return parsedRetry.data;
+        }
+      }
+    } catch (err: unknown) {
+      const { type, isDaily } = extractHttpStatusAndType(err);
+      if (isDaily || type === "DAILY_QUOTA_EXCEEDED") {
+        hasDailyExhaustion = true;
+      } else if (type === "RATE_LIMITED") {
+        hasRateLimit = true;
+      }
+      // Fall through to next model
+    }
+  }
+
+  if (hasDailyExhaustion) {
     throw new GeminiAnalysisError(
-      "The AI service is busy, try again in a minute.",
-      type === "QUOTA_EXCEEDED" ? "QUOTA_EXCEEDED" : "MODEL_UNAVAILABLE"
+      "AI explanations have reached their daily limit and return tomorrow. Numbers, charts and the history card still work.",
+      "DAILY_QUOTA_EXCEEDED"
     );
   }
+
+  if (hasRateLimit) {
+    throw new GeminiAnalysisError("Try again in a few seconds", "RATE_LIMITED");
+  }
+
+  throw new GeminiAnalysisError("AI service is busy", "MODEL_UNAVAILABLE");
 }
 
 function parseAndValidateInvestedEarlier(text: string): { success: true; data: InvestedEarlierAIResponse } | { success: false } {
