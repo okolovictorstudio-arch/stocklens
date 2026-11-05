@@ -27,6 +27,17 @@ interface ChatContainerProps {
   featureStatuses?: FeatureStatus[];
 }
 
+function ChatDisclaimer() {
+  return (
+    <p
+      className="text-center text-[14px] leading-relaxed text-muted-foreground max-w-3xl mx-auto px-2 text-balance"
+      style={{ textWrap: "balance" }}
+    >
+      StockLens is AI-powered and can make mistakes. Please double-check important details, and look at the longer-term pattern, not just one day. Prices may be delayed. Not financial advice.
+    </p>
+  );
+}
+
 export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
   const [activeSymbol, setActiveSymbol] = React.useState<string | null>(null);
   const [activeCompanyName, setActiveCompanyName] = React.useState<string>("");
@@ -361,9 +372,17 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
           </main>
         ) : !activeSymbol ? (
           // Empty State: Centered search & popular chips
-          <main className="flex-1 overflow-y-auto flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-x-hidden">
-            <ChatEmptyState onSelectStock={handleSelectStock} />
-          </main>
+          <div className="flex flex-1 flex-col h-full overflow-hidden">
+            <main className="flex-1 overflow-y-auto flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-x-hidden">
+              <ChatEmptyState onSelectStock={handleSelectStock} />
+            </main>
+            <div
+              className="px-4 pt-2 shrink-0 text-center"
+              style={{ paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))" }}
+            >
+              <ChatDisclaimer />
+            </div>
+          </div>
         ) : (
           // Active Chat View (Guided Claude-style conversation)
           <div className="flex flex-1 flex-col h-full overflow-hidden">
@@ -397,7 +416,7 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
             </div>
 
             {/* Scrollable Message Feed (Centered max 768px on desktop, full-width with 16px padding on mobile) */}
-            <div className="flex-1 overflow-y-auto px-4 py-6 overflow-x-hidden">
+            <div className="flex-1 overflow-y-auto px-4 pt-4 sm:pt-6 pb-6 sm:pb-8 overflow-x-hidden">
               <div className="mx-auto max-w-3xl space-y-6">
                 {messages.map((msg) => (
                   <div
@@ -452,12 +471,15 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
                     )}
                   </div>
                 ))}
-                <div ref={messagesEndRef} />
+                <div ref={messagesEndRef} className="h-2" />
               </div>
             </div>
 
             {/* Pinned Bottom Input Bar (Above mobile safe-area) */}
-            <div className="border-t border-border/80 bg-background/95 backdrop-blur-md px-4 py-3 pb-safe shrink-0">
+            <div
+              className="border-t border-border/80 bg-background/95 backdrop-blur-md px-4 pt-3 shrink-0"
+              style={{ paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))" }}
+            >
               <form
                 onSubmit={handleSendMessage}
                 className="mx-auto max-w-3xl flex items-center gap-2"
@@ -480,6 +502,9 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
                   </button>
                 </div>
               </form>
+              <div className="mt-2">
+                <ChatDisclaimer />
+              </div>
             </div>
           </div>
         )}
