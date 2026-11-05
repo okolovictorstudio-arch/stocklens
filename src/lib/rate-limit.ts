@@ -1,74 +1,141 @@
-/**
- * In-memory per-device rate limiter for the AI analysis endpoint.
- * Protects the free Gemini API quota (15 requests/min / daily limit).
- * Ready to migrate to Supabase in Phase 5.
- */
+import { getSupabaseAdmin } from "@/lib/supabase";
 
-interface RateLimitRecord {
-  count: number;
-  resetAt: number;
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  retryAfterSeconds: number;
 }
 
-const g = globalThis as unknown as {
-  __stocklensRateLimits?: Map<string, RateLimitRecord>;
+// In-Memory Fallback Map (survives dev HMR via globalThis)
+const gState = globalThis as unknown as {
+  __stocklensRateLimits?: Map<string, { count: number; windowStart: number }>;
 };
 
-if (!g.__stocklensRateLimits) {
-  g.__stocklensRateLimits = new Map();
+if (!gState.__stocklensRateLimits) {
+  gState.__stocklensRateLimits = new Map();
 }
 
-const limits = g.__stocklensRateLimits;
+const memoryLimits = gState.__stocklensRateLimits;
 
-export interface RateLimitResult {
-  allowed: boolean;
-  limit: number;
-  remaining: number;
-  resetInSeconds: number;
+/**
+ * Checks and increments a rate limit key using Supabase with automatic in-memory fallback.
+ */
+export async function checkRateLimit(
+  key: string,
+  limit: number,
+  windowSeconds: number
+): Promise<RateLimitResult> {
+  const supabase = getSupabaseAdmin();
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+
+  if (!supabase) {
+    return checkMemoryRateLimit(key, limit, windowSeconds);
+  }
+
+  try {
+    const { data: existing, error } = await supabase
+      .from("rate_limits")
+      .select("key, count, window_start")
+      .eq("key", key)
+      .maybeSingle();
+
+    if (error || !existing) {
+      // First hit in this window
+      await supabase.from("rate_limits").upsert({
+        key,
+        count: 1,
+        window_start: new Date(now).toISOString(),
+      });
+      return { allowed: true, remaining: limit - 1, retryAfterSeconds: 0 };
+    }
+
+    const windowStartMs = new Date(existing.window_start).getTime();
+    const elapsed = now - windowStartMs;
+
+    // Window expired: reset window
+    if (elapsed >= windowMs) {
+      await supabase.from("rate_limits").upsert({
+        key,
+        count: 1,
+        window_start: new Date(now).toISOString(),
+      });
+      return { allowed: true, remaining: limit - 1, retryAfterSeconds: 0 };
+    }
+
+    // Within window: check limit
+    if (existing.count < limit) {
+      const nextCount = existing.count + 1;
+      await supabase
+        .from("rate_limits")
+        .update({ count: nextCount })
+        .eq("key", key);
+      return {
+        allowed: true,
+        remaining: limit - nextCount,
+        retryAfterSeconds: 0,
+      };
+    }
+
+    // Exceeded
+    const retryAfter = Math.max(1, Math.ceil((windowMs - elapsed) / 1000));
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfterSeconds: retryAfter,
+    };
+  } catch (err) {
+    console.warn(`[RateLimit] Supabase error for ${key}, using memory:`, err);
+    return checkMemoryRateLimit(key, limit, windowSeconds);
+  }
+}
+
+function checkMemoryRateLimit(
+  key: string,
+  limit: number,
+  windowSeconds: number
+): RateLimitResult {
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+  const entry = memoryLimits.get(key);
+
+  if (!entry || now - entry.windowStart >= windowMs) {
+    memoryLimits.set(key, { count: 1, windowStart: now });
+    return { allowed: true, remaining: limit - 1, retryAfterSeconds: 0 };
+  }
+
+  if (entry.count < limit) {
+    entry.count += 1;
+    return { allowed: true, remaining: limit - entry.count, retryAfterSeconds: 0 };
+  }
+
+  const retryAfter = Math.max(1, Math.ceil((windowMs - (now - entry.windowStart)) / 1000));
+  return {
+    allowed: false,
+    remaining: 0,
+    retryAfterSeconds: retryAfter,
+  };
 }
 
 /**
- * Checks and increments rate limit for a given device/client key.
- * Default: 15 requests per 10-minute window per device.
+ * Validates Gemini AI call spacing across global and per-device limits.
  */
-export function checkRateLimit(
-  key: string,
-  maxRequests: number = 15,
-  windowSeconds: number = 600
-): RateLimitResult {
-  const now = Date.now();
-  const existing = limits.get(key);
-
-  if (!existing || existing.resetAt <= now) {
-    // New window
-    limits.set(key, {
-      count: 1,
-      resetAt: now + windowSeconds * 1000,
-    });
-    return {
-      allowed: true,
-      limit: maxRequests,
-      remaining: maxRequests - 1,
-      resetInSeconds: windowSeconds,
-    };
+export async function checkGeminiRateLimit(
+  deviceId?: string | null
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  // Global limit: max 12 requests per 60 seconds across all users to protect 15/min free quota
+  const globalCheck = await checkRateLimit("rl:global:gemini", 12, 60);
+  if (!globalCheck.allowed) {
+    return { allowed: false, retryAfterSeconds: globalCheck.retryAfterSeconds };
   }
 
-  // Active window
-  if (existing.count >= maxRequests) {
-    const resetInSeconds = Math.max(1, Math.round((existing.resetAt - now) / 1000));
-    return {
-      allowed: false,
-      limit: maxRequests,
-      remaining: 0,
-      resetInSeconds,
-    };
+  // Device limit if deviceId provided: max 4 requests per 60 seconds
+  if (deviceId) {
+    const deviceCheck = await checkRateLimit(`rl:device:${deviceId}:gemini`, 4, 60);
+    if (!deviceCheck.allowed) {
+      return { allowed: false, retryAfterSeconds: deviceCheck.retryAfterSeconds };
+    }
   }
 
-  existing.count += 1;
-  const resetInSeconds = Math.max(1, Math.round((existing.resetAt - now) / 1000));
-  return {
-    allowed: true,
-    limit: maxRequests,
-    remaining: maxRequests - existing.count,
-    resetInSeconds,
-  };
+  return { allowed: true, retryAfterSeconds: 0 };
 }

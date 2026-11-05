@@ -8,7 +8,7 @@ import {
   DISCLAIMER_TEXT,
 } from "@/lib/gemini";
 import { withCache, CACHE_TTL } from "@/lib/cache";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, checkGeminiRateLimit } from "@/lib/rate-limit";
 import { cleanCompanyName } from "@/lib/utils";
 import { computePlainPriceTrend, buildQuickSummary } from "@/lib/analytics";
 import type { GroundTruthData, StockAnalysisResponse, StockAnalysisOutput } from "@/types/analysis";
@@ -43,14 +43,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Per-device rate limiting (15 analyses per 10 min)
-    const rateLimit = checkRateLimit(deviceId, 15, 600);
+    const rateLimit = await checkRateLimit(deviceId, 15, 600);
     if (!rateLimit.allowed) {
       return NextResponse.json(
         {
-          error: `Analysis limit reached for this session. Please wait ${rateLimit.resetInSeconds} seconds before requesting another review.`,
+          error: `Analysis limit reached for this session. Please wait ${rateLimit.retryAfterSeconds} seconds before requesting another review.`,
           errorType: "QUOTA_EXCEEDED",
           isRateLimited: true,
-          resetInSeconds: rateLimit.resetInSeconds,
+          resetInSeconds: rateLimit.retryAfterSeconds,
         },
         { status: 429 }
       );
@@ -200,6 +200,13 @@ export async function POST(request: NextRequest) {
           let aiErrorType: string | undefined = undefined;
 
           try {
+            const geminiLimit = await checkGeminiRateLimit(deviceId);
+            if (!geminiLimit.allowed) {
+              throw new GeminiAnalysisError(
+                `AI analysis is taking a brief rest. Please try again in ${geminiLimit.retryAfterSeconds} seconds.`,
+                "RATE_LIMITED"
+              );
+            }
             analysis = await generateStockAnalysis(groundTruthData, deadlineTimestamp, "/api/analyze");
           } catch (geminiErr: unknown) {
             const geminiDuration = Date.now() - geminiStart;

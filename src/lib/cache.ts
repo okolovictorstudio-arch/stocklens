@@ -6,6 +6,8 @@
  * without altering any callers across the codebase.
  */
 
+import { getSupabaseAdmin } from "@/lib/supabase";
+
 export interface CacheEntry<T> {
   data: T;
   expiresAt: number;
@@ -71,11 +73,84 @@ class InMemoryCacheAdapter implements CacheAdapter {
   }
 }
 
-// Active cache provider instance
-let activeAdapter: CacheAdapter = new InMemoryCacheAdapter();
+// Supabase-backed Cache Adapter with in-memory fallback
+class SupabaseCacheAdapter implements CacheAdapter {
+  private inMemoryFallback = new InMemoryCacheAdapter();
+  private lastCleanupTime = 0;
+
+  async get<T>(key: string): Promise<T | null> {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) {
+      return this.inMemoryFallback.get<T>(key);
+    }
+
+    try {
+      const nowIso = new Date().toISOString();
+      const { data, error } = await supabase
+        .from("api_cache")
+        .select("value, expires_at")
+        .eq("key", key)
+        .gt("expires_at", nowIso)
+        .maybeSingle();
+
+      if (error || !data) {
+        return this.inMemoryFallback.get<T>(key);
+      }
+
+      const ttlRem = Math.max(1, Math.round((new Date(data.expires_at).getTime() - Date.now()) / 1000));
+      await this.inMemoryFallback.set(key, data.value as T, ttlRem);
+
+      this.triggerLazyCleanup(supabase);
+      return data.value as T;
+    } catch {
+      return this.inMemoryFallback.get<T>(key);
+    }
+  }
+
+  async set<T>(key: string, data: T, ttlSeconds: number): Promise<void> {
+    // Always mirror to in-memory for instant local availability
+    await this.inMemoryFallback.set(key, data, ttlSeconds);
+
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return;
+
+    try {
+      const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+      await supabase.from("api_cache").upsert({
+        key,
+        value: data,
+        expires_at: expiresAt,
+      });
+    } catch {
+      // In-memory already saved, continue smoothly without user error
+    }
+  }
+
+  async getInfo(key: string): Promise<{ isCached: boolean; ttlRemaining?: number }> {
+    return this.inMemoryFallback.getInfo(key);
+  }
+
+  private triggerLazyCleanup(supabase: ReturnType<typeof getSupabaseAdmin>) {
+    if (!supabase) return;
+    const now = Date.now();
+    if (now - this.lastCleanupTime < 10 * 60 * 1000) return; // at most once every 10 min
+    this.lastCleanupTime = now;
+
+    // Fire and forget asynchronous cleanup of expired cache entries
+    Promise.resolve(
+      supabase
+        .from("api_cache")
+        .delete()
+        .lt("expires_at", new Date().toISOString())
+    ).catch(() => {});
+  }
+}
+
+// Active cache provider instance (Supabase with transparent memory fallback)
+let activeAdapter: CacheAdapter = new SupabaseCacheAdapter();
 
 /**
- * Plugs in an external cache adapter (e.g., Supabase in Phase 5).
+ * Plugs in an external cache adapter.
  */
 export function setCacheAdapter(adapter: CacheAdapter): void {
   activeAdapter = adapter;

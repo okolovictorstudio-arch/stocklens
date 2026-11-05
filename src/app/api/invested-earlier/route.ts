@@ -4,6 +4,7 @@ import { getFiveYearDailyCandles } from "@/lib/twelvedata";
 import { calculateInvestedEarlier } from "@/lib/analytics";
 import { generateInvestedEarlierAI, GeminiAnalysisError } from "@/lib/gemini";
 import { withCache, CACHE_TTL } from "@/lib/cache";
+import { checkGeminiRateLimit } from "@/lib/rate-limit";
 import { cleanCompanyName } from "@/lib/utils";
 
 export const maxDuration = 30;
@@ -18,6 +19,7 @@ export async function POST(request: NextRequest) {
     const rawAmount = parseFloat(body.amount);
     const amount = !isNaN(rawAmount) && rawAmount > 0 ? Math.round(rawAmount * 100) / 100 : 100;
     const reqCompanyName = (body.companyName || "").trim();
+    const deviceId = (body.deviceId || request.headers.get("x-device-id") || "").trim();
 
     if (!symbol) {
       return NextResponse.json(
@@ -64,6 +66,13 @@ export async function POST(request: NextRequest) {
         let aiError: string | null = null;
 
         try {
+          const geminiLimit = await checkGeminiRateLimit(deviceId);
+          if (!geminiLimit.allowed) {
+            throw new GeminiAnalysisError(
+              `AI explanation is taking a brief rest. Please try again in ${geminiLimit.retryAfterSeconds} seconds.`,
+              "RATE_LIMITED"
+            );
+          }
           aiExplanation = await generateInvestedEarlierAI(
             {
               symbol,

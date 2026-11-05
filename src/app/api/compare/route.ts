@@ -12,6 +12,7 @@ import {
 } from "@/lib/analytics";
 import { generateStockComparisonAI, GeminiAnalysisError } from "@/lib/gemini";
 import { withCache, CACHE_TTL } from "@/lib/cache";
+import { checkGeminiRateLimit } from "@/lib/rate-limit";
 import { cleanCompanyName } from "@/lib/utils";
 
 export const maxDuration = 30;
@@ -167,6 +168,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const stockA = body.stockA as StockCompareMetrics;
     const stockB = body.stockB as StockCompareMetrics;
+    const deviceId = (body.deviceId || request.headers.get("x-device-id") || "").trim();
 
     if (!stockA?.symbol || !stockB?.symbol) {
       return NextResponse.json(
@@ -187,6 +189,13 @@ export async function POST(request: NextRequest) {
         let errorType: string | undefined;
 
         try {
+          const geminiLimit = await checkGeminiRateLimit(deviceId);
+          if (!geminiLimit.allowed) {
+            throw new GeminiAnalysisError(
+              `AI comparison is taking a brief rest. Please try again in ${geminiLimit.retryAfterSeconds} seconds.`,
+              "RATE_LIMITED"
+            );
+          }
           aiComparison = await generateStockComparisonAI(
             stockA,
             stockB,

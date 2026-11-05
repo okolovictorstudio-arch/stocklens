@@ -10,6 +10,7 @@ import {
   Coins,
   Compass,
   HelpCircle,
+  Star,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -20,6 +21,7 @@ import {
 import type { StockQuote, StockProfile, StockFundamentals, CandleDataPoint } from "@/types/stock";
 import { computeAtAGlanceOverview } from "@/lib/analytics";
 import { cleanCompanyName } from "@/lib/utils";
+import { getOrCreateDeviceId } from "@/lib/device-id";
 
 interface AtAGlanceCardProps {
   quote: StockQuote;
@@ -36,6 +38,68 @@ export function AtAGlanceCard({
 }: AtAGlanceCardProps) {
   const isPositive = quote.change >= 0;
   const companyName = cleanCompanyName(profile?.name || quote.symbol);
+  const [isWatchlisted, setIsWatchlisted] = React.useState(false);
+
+  // Sync watchlist status
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    async function checkStatus() {
+      try {
+        const deviceId = getOrCreateDeviceId();
+        const res = await fetch("/api/watchlist", {
+          headers: { "x-device-id": deviceId },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (!isCancelled && Array.isArray(json.items)) {
+            setIsWatchlisted(json.items.some((i: { ticker: string }) => i.ticker === quote.symbol));
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
+    checkStatus();
+
+    const handleUpdate = () => checkStatus();
+    window.addEventListener("stocklens_watchlist_updated", handleUpdate);
+    return () => {
+      isCancelled = true;
+      window.removeEventListener("stocklens_watchlist_updated", handleUpdate);
+    };
+  }, [quote.symbol]);
+
+  const handleToggleStar = async () => {
+    const nextState = !isWatchlisted;
+    setIsWatchlisted(nextState);
+    const deviceId = getOrCreateDeviceId();
+
+    try {
+      if (nextState) {
+        await fetch("/api/watchlist", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-device-id": deviceId,
+          },
+          body: JSON.stringify({
+            ticker: quote.symbol,
+            companyName,
+          }),
+        });
+      } else {
+        await fetch(`/api/watchlist?ticker=${encodeURIComponent(quote.symbol)}`, {
+          method: "DELETE",
+          headers: { "x-device-id": deviceId },
+        });
+      }
+      window.dispatchEvent(new Event("stocklens_watchlist_updated"));
+    } catch {
+      setIsWatchlisted(!nextState);
+    }
+  };
 
   const overview = React.useMemo(() => {
     return computeAtAGlanceOverview({
@@ -62,13 +126,26 @@ export function AtAGlanceCard({
       {/* Top row: Company name first, ticker second, industry */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-baseline gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
               {companyName}
             </h2>
             <span className="font-mono text-sm font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-md">
               {quote.symbol}
             </span>
+            <button
+              type="button"
+              onClick={handleToggleStar}
+              aria-label={isWatchlisted ? "Remove from watchlist" : "Add to watchlist"}
+              className={`flex size-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-xl transition-colors cursor-pointer ${
+                isWatchlisted
+                  ? "text-amber-500 hover:bg-amber-500/10"
+                  : "text-muted-foreground/60 hover:text-foreground hover:bg-muted"
+              }`}
+              title={isWatchlisted ? "Remove from watchlist" : "Add to watchlist"}
+            >
+              <Star className={`size-5 ${isWatchlisted ? "fill-amber-500" : ""}`} />
+            </button>
           </div>
 
           <p className="mt-1 text-sm text-muted-foreground flex items-center gap-2">

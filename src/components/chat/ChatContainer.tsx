@@ -8,7 +8,8 @@ import { ChatEmptyState } from "@/components/chat/ChatEmptyState";
 import { StockOverviewMessage } from "@/components/chat/StockOverviewMessage";
 import { InvestedEarlierCard } from "@/components/stock/InvestedEarlierCard";
 import { StockCompareCard } from "@/components/stock/StockCompareCard";
-import { saveRecentChat } from "@/lib/recent-chats";
+import { MarketDashboard } from "@/components/dashboard/MarketDashboard";
+import { saveRecentChat, getSavedChatMessages } from "@/lib/recent-chats";
 import { useSidebarCollapsed } from "@/lib/sidebar-state";
 import { cleanCompanyName } from "@/lib/utils";
 import {
@@ -29,6 +30,7 @@ interface ChatContainerProps {
 export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
   const [activeSymbol, setActiveSymbol] = React.useState<string | null>(null);
   const [activeCompanyName, setActiveCompanyName] = React.useState<string>("");
+  const [isDashboardActive, setIsDashboardActive] = React.useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = React.useState(false);
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [stockDataMap, setStockDataMap] = React.useState<Record<string, StockDetailsResponse>>({});
@@ -43,15 +45,49 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSelectStock = React.useCallback((symbol: string, companyName: string) => {
+  // Continuously sync messages to Supabase / localStorage for the active chat
+  React.useEffect(() => {
+    if (activeSymbol && activeCompanyName && messages.length > 0) {
+      saveRecentChat(activeSymbol, activeCompanyName, messages);
+    }
+  }, [activeSymbol, activeCompanyName, messages]);
+
+  const handleSelectStock = React.useCallback(async (symbol: string, companyName: string, chatId?: string) => {
     const cleanSym = symbol.trim().toUpperCase();
     const cleanName = cleanCompanyName(companyName || cleanSym);
 
+    setIsDashboardActive(false);
     setActiveSymbol(cleanSym);
     setActiveCompanyName(cleanName);
-    saveRecentChat(cleanSym, cleanName);
 
-    // Initial guided conversation message: "Tell me about [Company]"
+    // 1. If existing conversation exists for this stock in localStorage, restore it immediately
+    const existingMessages = getSavedChatMessages(cleanSym);
+    if (existingMessages && existingMessages.length > 0) {
+      setMessages(existingMessages);
+      saveRecentChat(cleanSym, cleanName, existingMessages);
+      return;
+    }
+
+    // 2. If chatId is provided, try fetching saved messages from Supabase
+    if (chatId) {
+      try {
+        const { getOrCreateDeviceId } = await import("@/lib/device-id");
+        const deviceId = getOrCreateDeviceId();
+        const res = await fetch(`/api/chats/${chatId}`, {
+          headers: { "x-device-id": deviceId },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json.messages) && json.messages.length > 0) {
+            setMessages(json.messages);
+            saveRecentChat(cleanSym, cleanName, json.messages);
+            return;
+          }
+        }
+      } catch {}
+    }
+
+    // 3. Otherwise initial guided conversation message: "Tell me about [Company]"
     const userMsg: ChatMessage = {
       id: `msg_u_${Date.now()}`,
       role: "user",
@@ -70,14 +106,23 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
       timestamp: Date.now() + 1,
     };
 
-    setMessages([userMsg, assistantMsg]);
+    const initialMsgs = [userMsg, assistantMsg];
+    setMessages(initialMsgs);
+    saveRecentChat(cleanSym, cleanName, initialMsgs);
   }, []);
 
   const handleNewChat = React.useCallback(() => {
+    setIsDashboardActive(false);
     setActiveSymbol(null);
     setActiveCompanyName("");
     setMessages([]);
     setInputVal("");
+  }, []);
+
+  const handleOpenDashboard = React.useCallback(() => {
+    setIsDashboardActive(true);
+    setActiveSymbol(null);
+    setActiveCompanyName("");
   }, []);
 
   const handleDataLoaded = React.useCallback((data: StockDetailsResponse) => {
@@ -286,6 +331,8 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
         onCloseMobile={() => setIsMobileDrawerOpen(false)}
         onNewChat={handleNewChat}
         onSelectStock={handleSelectStock}
+        onOpenDashboard={handleOpenDashboard}
+        isDashboardActive={isDashboardActive}
         activeSymbol={activeSymbol || undefined}
         triggerRef={hamburgerRef}
       />
@@ -307,8 +354,12 @@ export function ChatContainer({ featureStatuses = [] }: ChatContainerProps) {
         {/* Development Setup Warning Banner (Dev mode only, offset cleanly in main column) */}
         <FeatureWarningBanner features={featureStatuses} />
 
-        {/* Dynamic Chat Body */}
-        {!activeSymbol ? (
+        {/* Dynamic Main Body: Dashboard, Empty Search, or Active Chat */}
+        {isDashboardActive ? (
+          <main className="flex-1 overflow-y-auto p-4 sm:p-6 overflow-x-hidden">
+            <MarketDashboard onSelectStock={handleSelectStock} />
+          </main>
+        ) : !activeSymbol ? (
           // Empty State: Centered search & popular chips
           <main className="flex-1 overflow-y-auto flex items-start sm:items-center justify-center p-4 sm:p-6 overflow-x-hidden">
             <ChatEmptyState onSelectStock={handleSelectStock} />
